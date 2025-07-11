@@ -317,6 +317,7 @@ async def run_redeem_with_retry(player_id, code, debug=False):
     return result
 
 async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
+    logger.info(f"[{player_id}] _redeem_once() 進入，開始兌換流程")
     browser = None
 
     def log_entry(attempt, **kwargs):
@@ -355,6 +356,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
 
             for attempt in range(1, OCR_MAX_RETRIES + 1):
                 try:
+                    logger.info(f"[{player_id}] CAPTCHA_API_KEY 存在檢查: {bool(CAPTCHA_API_KEY)}")
                     captcha_text, method_used = await _solve_captcha(page, attempt, player_id)
                     log_entry(attempt, captcha_text=captcha_text, method=method_used)
 
