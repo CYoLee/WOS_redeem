@@ -1,0 +1,9 @@
+aiohttp
+firebase-admin
+flask
+googletrans==4.0.0-rc1
+nest_asyncio
+playwright
+python-dotenv
+pytz
+requests
