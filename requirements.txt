@@ -1,11 +1,9 @@
-flask
+discord.py
 firebase-admin
 aiohttp
+flask
 gunicorn
 playwright
+nest_asyncio
 python-dotenv
-nest_asyncio
-requests
-googletrans==4.0.0rc1
-pytz
-nest_asyncio
+google-cloud-firestore
