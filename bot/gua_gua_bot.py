@@ -144,6 +144,11 @@ async def run_push_notify():
                 continue
             msg = f'{data.get("mention", "")}\n⏰ **活動提醒 / Reminder** ⏰\n{data["message"]}'
             await channel.send(msg)
+
+            # ✅ 新增：LINE 同步推播
+            line_msg = f"⏰ 活動提醒 / Reminder ⏰\n{data['message']}"
+            await send_to_line_group(line_msg)
+
             await firestore_delete(db.collection("notifications").document(doc.id))
         except Exception as e:
             logger.warning(f"[http_push_notify] 發送失敗：{e}")
