@@ -3,7 +3,7 @@ firebase-admin
 aiohttp
 flask
 gunicorn
-playwright
+playwright==1.53.0
 nest_asyncio
 python-dotenv
 google-cloud-firestore
