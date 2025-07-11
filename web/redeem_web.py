@@ -531,6 +531,7 @@ def _save_blank_captcha_image(player_id, attempt):
     )
 
 CAPTCHA_API_KEY = os.getenv("CAPTCHA_API_KEY")
+logger.info(f"CAPTCHA_API_KEY 設定檢查: {bool(CAPTCHA_API_KEY)}")
 
 async def solve_with_2captcha(b64_img):
     api_key = os.getenv("CAPTCHA_API_KEY")
