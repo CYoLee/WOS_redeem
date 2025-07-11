@@ -28,7 +28,7 @@ COPY requirements.txt requirements.txt
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
 RUN playwright install --with-deps chromium
-
+RUN echo "force rebuild 20250711"
 COPY . .
 
 CMD ["bash", "-c", "gunicorn web.redeem_web:app --workers=1 --threads=2 --bind 0.0.0.0:10000 & python bot/gua_gua_bot.py"]
