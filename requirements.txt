@@ -8,3 +8,5 @@ nest_asyncio
 python-dotenv
 google-cloud-firestore
 pytz
+googletrans==4.0.0rc1
+wcwidth
