@@ -760,7 +760,7 @@ def favicon():
 def run_notify():
     try:
         secret = os.getenv("INTERNAL_SECRET")
-        url = "https://gua-gua-bot-discord-968119669406.asia-east1.run.app/internal_push_notify"
+        url = "https://wosredeem-production-2f18.up.railway.app/internal_push_notify"
         resp = requests.post(url, json={"secret": secret}, timeout=10)
         return f"✅ 結果：{resp.text}", 200
     except Exception as e:
@@ -1470,13 +1470,21 @@ def reply_to_line(reply_token, message):
         }]
     }
     try:
-        requests.post(url, headers=headers, json=payload)
+        resp = requests.post(url, headers=headers, json=payload)  # ✅ 把回應存進 resp
+        print("[LINE] reply_to_line 回應：", resp.status_code, resp.text)
     except Exception as e:
         logger.warning(f"[LINE] 回覆失敗：{e}")
 
 def send_to_line_group(message):
     LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-    LINE_GROUP_ID = os.getenv("LINE_NOTIFY_GROUP_ID")  # ← 你的群組 ID，設成固定
+    LINE_GROUP_ID = os.getenv("LINE_NOTIFY_GROUP_ID")
+
+    if not LINE_CHANNEL_ACCESS_TOKEN:
+        logger.warning("[LINE] ❌ LINE_CHANNEL_ACCESS_TOKEN 未設定，無法推播")
+        return
+    if not LINE_GROUP_ID or not LINE_GROUP_ID.startswith("C"):
+        logger.warning(f"[LINE] ❌ LINE_NOTIFY_GROUP_ID 格式錯誤或未設定：{LINE_GROUP_ID}")
+        return
 
     headers = {
         "Content-Type": "application/json",
@@ -1498,11 +1506,11 @@ def send_to_line_group(message):
             timeout=10
         )
         if resp.status_code != 200:
-            logger.warning(f"[LINE] 推播失敗：{resp.status_code} {resp.text}")
+            logger.warning(f"[LINE] ❌ 推播失敗：{resp.status_code} {resp.text} | Payload: {payload}")
         else:
-            logger.info(f"[LINE] 推播成功：{resp.status_code}")
+            logger.info(f"[LINE] ✅ 推播成功：{resp.status_code} | Message: {message}")
     except Exception as e:
-        logger.warning(f"[LINE] 推播發生錯誤：{e}")
+        logger.warning(f"[LINE] ❌ 推播發生例外：{e}")
 
 if __name__ == "__main__":
     # ✅ 先啟動 ping，再 run Flask
