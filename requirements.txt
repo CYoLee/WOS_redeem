@@ -3,3 +3,4 @@ firebase-admin
 aiohttp
 gunicorn
 playwright
+python-dotenv
