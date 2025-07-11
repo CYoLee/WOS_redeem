@@ -1287,6 +1287,30 @@ async def set_translate_setting(group_id, enabled: bool):
         logger.warning(f"[LINE] 無法寫入翻譯設定：{e}")
         return False
 
+async def check_and_send_notify():
+    now = datetime.now(tz).replace(second=0, microsecond=0)
+    future = now + timedelta(seconds=30)
+    docs = await firestore_stream(
+        db.collection("notifications")
+        .where("datetime", ">=", now)
+        .where("datetime", "<", future)
+        .order_by("datetime")
+        .limit(10)
+    )
+    for doc in docs:
+        data = doc.to_dict()
+        try:
+            channel_id = data.get("channel_id")
+            mention = data.get("mention", "")
+            message = data.get("message", "")
+
+            send_to_discord(channel_id, mention, message)  # 透過 webhook 發送
+            send_to_line_group(message)
+
+            await firestore_delete(db.collection("notifications").document(doc.id))
+        except Exception as e:
+            logger.warning(f"[check_and_send_notify] 發送失敗：{e}")
+
 @app.route("/line_webhook", methods=["POST"])
 def line_webhook():
     signature = request.headers.get("X-Line-Signature", "")

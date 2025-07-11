@@ -1,5 +1,5 @@
 import asyncio
-from gua_gua_bot import run_push_notify
+from redeem_web import check_and_send_notify
 
 if __name__ == "__main__":
     loop = asyncio.new_event_loop()
@@ -7,7 +7,7 @@ if __name__ == "__main__":
 
     while True:
         try:
-            loop.run_until_complete(run_push_notify())
+            loop.run_until_complete(check_and_send_notify())
         except Exception as e:
             print(f"[Worker Error] {e}")
         time.sleep(30)
