@@ -34,6 +34,8 @@ from datetime import datetime, timedelta
 tz = timezone("Asia/Taipei")
 from googletrans import Translator
 translator = Translator()
+from asyncio import Semaphore
+fetch_semaphore = Semaphore(10)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -730,20 +732,21 @@ async def fetch_name_and_kingdom_common(pid):
         return name, kingdom
 
 async def fetch_and_store_if_missing(guild_id, pid):
-    ref = db.collection("ids").document(guild_id).collection("players").document(pid)
-    doc = await firestore_get(ref)
-    if doc.exists:
-        return
-    name, kingdom = await fetch_name_and_kingdom_common(pid)
-    if is_valid_player_data(name, kingdom):
-        await firestore_set(ref, {
-            "name": name,
-            "kingdom": kingdom,
-            "updated_at": datetime.utcnow()
-        }, merge=True)
-        logger.info(f"[{pid}][Info]已自動新增：{name}")
-    else:
-        logger.warning(f"[{pid}][Warn]名稱或王國未知，未寫入")
+    async with fetch_semaphore:
+        ref = db.collection("ids").document(guild_id).collection("players").document(pid)
+        doc = await firestore_get(ref)
+        if doc.exists:
+            return
+        name, kingdom = await fetch_name_and_kingdom_common(pid)
+        if is_valid_player_data(name, kingdom):
+            await firestore_set(ref, {
+                "name": name,
+                "kingdom": kingdom,
+                "updated_at": datetime.utcnow()
+            }, merge=True)
+            logger.info(f"[{pid}][Info]已自動新增：{name}")
+        else:
+            logger.warning(f"[{pid}][Warn]名稱或王國未知，未寫入")
 
 def is_valid_player_data(name: str, kingdom: str) -> bool:
     return name != "未知名稱" and kingdom != "未知"
@@ -892,10 +895,10 @@ def redeem_submit():
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
-    logger.info(f"[API] /update_names_api 收到請求 guild_id={guild_id}")
     try:
         data = request.json
         guild_id = data.get("guild_id")
+        logger.info(f"[API] /update_names_api 收到請求 guild_id={guild_id}")
         if not guild_id:
             return jsonify({"success": False, "reason": "缺少 guild_id / Missing guild_id"}), 400
 
