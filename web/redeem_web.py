@@ -37,6 +37,8 @@ translator = Translator()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+nest_asyncio.apply()
+loop = asyncio.get_event_loop_policy().get_event_loop()
 
 def build_summary_block(code, success, fail, skipped, duration, is_retry=False):
     return (
@@ -877,13 +879,7 @@ def redeem_submit():
         "guild_id": guild_id,
         "retry": False
     }
-
-    # ✅ 背景執行
-    def redeem_background(payload):
-        asyncio.run(process_redeem(payload))
-
-    threading.Thread(target=redeem_background, args=(payload,), daemon=True).start()
-
+    loop.create_task(process_redeem(payload))
     return jsonify({"message": "兌換任務已提交，背景處理中"}), 200
 
 @app.route("/update_names_api", methods=["POST"])
@@ -1049,9 +1045,6 @@ async def self_ping_loop():
         except Exception as e:
             logger.warning(f"[Self Ping] Worker 失敗 / Failed: {e}")
         await asyncio.sleep(240)  # 每 4 分鐘 ping 一次
-
-def start_self_ping():
-    asyncio.run(self_ping_loop())
 
 from hashlib import sha256
 from hmac import compare_digest, new as hmac_new
@@ -1332,7 +1325,6 @@ def send_to_line_group(message):
         logger.warning(f"[LINE] ❌ 推播發生例外：{e}")
 
 if __name__ == "__main__":
-    # ✅ 先啟動 ping，再 run Flask
-    threading.Thread(target=start_self_ping, daemon=True).start()
     port = int(os.environ.get("PORT", 8080))
+    loop.create_task(self_ping_loop())
     app.run(host="0.0.0.0", port=port)
