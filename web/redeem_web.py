@@ -150,15 +150,17 @@ async def process_redeem(payload, fetch_semaphore=None):
     all_fail = []
 
     await asyncio.gather(*(fetch_and_store_if_missing(guild_id, pid, fetch_semaphore) for pid in player_ids))
-
+    logger.info("準備讀取 success_redeems")
     success_docs = await firestore_stream(
         db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players")
     )
+    logger.info(f"success_redeems 讀取完成，筆數：{len(success_docs)}")
     already_redeemed_ids = {doc.id for doc in success_docs}
-
+    logger.info("準備讀取 failed_redeems")
     failed_docs = await firestore_stream(
         db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players")
     )
+    logger.info(f"failed_redeems 讀取完成，筆數：{len(failed_docs)}")
     failed_ids = {doc.id for doc in failed_docs}
 
     captcha_failed_ids = {
@@ -1346,5 +1348,5 @@ def send_to_line_group(message):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    loop.create_task(self_ping_loop())
+    threading.Thread(target=lambda: loop.run_until_complete(self_ping_loop()), daemon=True).start()
     app.run(host="0.0.0.0", port=port)
