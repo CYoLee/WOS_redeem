@@ -41,8 +41,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
     force=True
 )
-logger = logging.getLogger("redeem_web")
-app.logger = logger
 nest_asyncio.apply()
 loop = asyncio.get_event_loop_policy().get_event_loop()
 logger.info(f"[Startup] redeem_web 啟動中... PORT={os.environ.get('PORT', 8080)} LINE_CHANNEL_SECRET={'存在' if os.getenv('LINE_CHANNEL_SECRET') else '無'} CAPTCHA_API_KEY={'存在' if os.getenv('CAPTCHA_API_KEY') else '無'}")
@@ -85,7 +83,8 @@ def send_long_webhook(webhook_url, content):
 
 # === 初始化 ===
 app = Flask(__name__)
-
+logger = logging.getLogger("redeem_web")
+app.logger = logger
 # === 設定 ===
 OCR_MAX_RETRIES = 3
 PAGE_LOAD_TIMEOUT = 60000
