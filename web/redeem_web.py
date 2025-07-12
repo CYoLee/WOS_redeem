@@ -41,6 +41,12 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
     force=True
 )
+logger = logging.getLogger("redeem_web")
+
+app = Flask(__name__)
+# app.logger = logger  # 保留與否視需求
+logger.info("Flask app initialized")
+
 nest_asyncio.apply()
 loop = asyncio.get_event_loop_policy().get_event_loop()
 logger.info(f"[Startup] redeem_web 啟動中... PORT={os.environ.get('PORT', 8080)} LINE_CHANNEL_SECRET={'存在' if os.getenv('LINE_CHANNEL_SECRET') else '無'} CAPTCHA_API_KEY={'存在' if os.getenv('CAPTCHA_API_KEY') else '無'}")
@@ -80,11 +86,6 @@ def send_long_webhook(webhook_url, content):
                 logger.info(f"[Webhook] 發送成功：{resp.status_code}")
         except Exception as e:
             logger.warning(f"[Webhook] 發送失敗：{e}")
-
-# === 初始化 ===
-logger = logging.getLogger("redeem_web")
-app = Flask(__name__)
-app.logger = logger
 
 # === 設定 ===
 OCR_MAX_RETRIES = 3
@@ -133,14 +134,13 @@ def is_success_reason(reason, message=""):
 REDEEM_RETRIES = 3
 # === 主流程 ===
 async def process_redeem(payload):
-    logger.info(f"[Redeem] 開始處理 guild_id={guild_id} code={code} retry={is_retry} 人數={len(player_ids)}")
     start_time = time.time()
     code = payload.get("code")
     player_ids = payload.get("player_ids")
     debug = payload.get("debug", False)
     guild_id = payload.get("guild_id")
     is_retry = payload.get("retry", False)
-
+    logger.info(f"[Redeem] 開始處理 guild_id={guild_id} code={code} retry={is_retry} 人數={len(player_ids)}")
     header = "Retry 兌換完成 / Retry Redemption Complete" if is_retry else "兌換完成 / Redemption Completed"
     MAX_BATCH_SIZE = 1
     all_success = []
@@ -263,7 +263,7 @@ async def process_redeem(payload):
         duration=time.time() - start_time,
         is_retry=is_retry
     )
-
+    logger.info(f"[Redeem] 完成處理 guild_id={guild_id} code={code} 成功={len(all_success)} 失敗={len(all_fail)} 跳過={skipped_count}")
     failures_block = await format_failures_block(guild_id, all_fail)
     full_block = f"{summary_block}\n\n{failures_block.strip() or '無錯誤資料 / No error data'}"
     webhook_message = f"{header}\n```text\n{textwrap.indent(full_block, '  ')}\n```"
@@ -274,7 +274,6 @@ async def process_redeem(payload):
             send_long_webhook(webhook_url, webhook_message)
         except Exception as e:
             logger.warning(f"[Webhook] 發送失敗：{e}")
-logger.info(f"[Redeem] 完成處理 guild_id={guild_id} code={code} 成功={len(all_success)} 失敗={len(all_fail)} 跳過={skipped_count}")
 
 async def run_redeem_with_retry(player_id, code, debug=False):
     logger.info(f"[Redeem] {player_id} 開始兌換 retries={REDEEM_RETRIES}")
