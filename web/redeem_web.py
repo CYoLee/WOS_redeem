@@ -34,8 +34,8 @@ from datetime import datetime, timedelta
 tz = timezone("Asia/Taipei")
 from googletrans import Translator
 translator = Translator()
-from asyncio import Semaphore
-fetch_semaphore = Semaphore(10)
+from asyncio import BoundedSemaphore
+DEFAULT_FETCH_LIMIT = 10
 
 logging.basicConfig(
     level=logging.INFO,
@@ -135,7 +135,8 @@ def is_success_reason(reason, message=""):
 
 REDEEM_RETRIES = 3
 # === 主流程 ===
-async def process_redeem(payload):
+async def process_redeem(payload, fetch_semaphore=None):
+    fetch_semaphore = fetch_semaphore or BoundedSemaphore(DEFAULT_FETCH_LIMIT)
     start_time = time.time()
     code = payload.get("code")
     player_ids = payload.get("player_ids")
@@ -148,7 +149,7 @@ async def process_redeem(payload):
     all_success = []
     all_fail = []
 
-    await asyncio.gather(*(fetch_and_store_if_missing(guild_id, pid) for pid in player_ids))
+    await asyncio.gather(*(fetch_and_store_if_missing(guild_id, pid, fetch_semaphore) for pid in player_ids))
 
     success_docs = await firestore_stream(
         db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players")
@@ -731,11 +732,13 @@ async def fetch_name_and_kingdom_common(pid):
         await browser.close()
         return name, kingdom
 
-async def fetch_and_store_if_missing(guild_id, pid):
+async def fetch_and_store_if_missing(guild_id, pid, fetch_semaphore):
+    logger.info(f"[{pid}] fetch_and_store_if_missing 呼叫進入")
     async with fetch_semaphore:
         ref = db.collection("ids").document(guild_id).collection("players").document(pid)
         doc = await firestore_get(ref)
         if doc.exists:
+            logger.info(f"[{pid}] fetch_and_store_if_missing 完成寫入或已存在 (已存在)")
             return
         name, kingdom = await fetch_name_and_kingdom_common(pid)
         if is_valid_player_data(name, kingdom):
@@ -744,9 +747,10 @@ async def fetch_and_store_if_missing(guild_id, pid):
                 "kingdom": kingdom,
                 "updated_at": datetime.utcnow()
             }, merge=True)
-            logger.info(f"[{pid}][Info]已自動新增：{name}")
+            logger.info(f"[{pid}] fetch_and_store_if_missing 完成寫入或已存在 (新寫入)")
         else:
             logger.warning(f"[{pid}][Warn]名稱或王國未知，未寫入")
+    logger.info(f"[{pid}] fetch_and_store_if_missing 結束")
 
 def is_valid_player_data(name: str, kingdom: str) -> bool:
     return name != "未知名稱" and kingdom != "未知"
