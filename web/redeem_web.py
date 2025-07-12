@@ -862,7 +862,6 @@ def list_ids():
 @app.route("/redeem_submit", methods=["POST"])
 def redeem_submit():
     data = request.json
-    # 檢查參數
     payload = {
         "code": data.get("code"),
         "player_ids": data.get("player_ids"),
@@ -874,7 +873,11 @@ def redeem_submit():
     if not payload["guild_id"] or not payload["code"] or not isinstance(payload["player_ids"], list) or not payload["player_ids"]:
         return jsonify({"success": False, "reason": "缺少必要參數"}), 400
 
-    threading.Thread(target=lambda: asyncio.run(process_redeem(payload)), daemon=True).start()
+    threading.Thread(
+        target=lambda: asyncio.run(process_redeem(payload)),
+        daemon=True
+    ).start()
+
     return jsonify({"message": "兌換任務已提交，背景處理中"}), 200
 
 @app.route("/update_names_api", methods=["POST"])
