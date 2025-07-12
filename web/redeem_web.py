@@ -860,6 +860,8 @@ def list_ids():
 @app.route("/redeem_submit", methods=["POST"])
 def redeem_submit():
     data = request.json
+    logger.info(f"[REDEEM SUBMIT] 收到請求：{data}")
+
     code = data.get("code")
     player_ids = data.get("player_ids")
     debug = data.get("debug", False)
