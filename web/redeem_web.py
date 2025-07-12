@@ -192,6 +192,7 @@ async def process_redeem(payload, fetch_semaphore=None):
             assert pid not in already_redeemed_ids, f"過濾失敗：{pid} 應已在 success_redeems 中"
 
     if not filtered_player_ids:
+        logger.info(f"[Redeem] filtered_player_ids 為空，觸發 webhook 發送並結束 guild_id={guild_id} code={code}")
         summary_block = build_summary_block(
             code=code,
             success=0,
