@@ -866,232 +866,25 @@ def redeem_submit():
     player_ids = data.get("player_ids")
     debug = data.get("debug", False)
     guild_id = data.get("guild_id")
-    if not guild_id:
-        return jsonify({"success": False, "reason": "缺少 guild_id"}), 400
-    if not code:
-        return jsonify({"success": False, "reason": "缺少 code / Missing code"}), 400
 
-    if not isinstance(player_ids, list) or not player_ids:
-        return jsonify({"success": False, "reason": "缺少或無效的 player_ids（空或非 list） / Missing or invalid player_ids (empty or not a list)"}), 400
+    if not guild_id or not code or not isinstance(player_ids, list) or not player_ids:
+        return jsonify({"success": False, "reason": "缺少必要參數"}), 400
 
-    MAX_BATCH_SIZE = 1
-    start_time = time.time()
+    payload = {
+        "code": code,
+        "player_ids": player_ids,
+        "debug": debug,
+        "guild_id": guild_id,
+        "retry": False
+    }
 
-    async def process_all(is_retry=False):
-        header = "兌換完成 / Redemption Completed"
-        all_success = []
-        all_fail = []
-        final_failed_ids = []
-        summary_block = ""
-        failures_block = ""
-        # 先查 Firestore 並補全缺失 ID
-        doc_ref_base = db.collection("ids")
-        await asyncio.gather(*(fetch_and_store_if_missing(guild_id, pid) for pid in player_ids))
+    # ✅ 背景執行
+    def redeem_background(payload):
+        asyncio.run(process_redeem(payload))
 
-        # ✅ 濾除已兌換成功或已領取過的 ID（避免浪費 2Captcha）
-        skip_success_ids = len(player_ids) > 1  # 只有多人兌換才跳過
-        if not skip_success_ids:
-            logger.info(f"單人兌換：即使已兌換成功仍會重新處理（不略過）")
-        already_redeemed_ids = set()
-        filtered_player_ids = []
-        if skip_success_ids:
-            success_docs = await firestore_stream(
-                db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players")
-            )
-            already_redeemed_ids = {doc.id for doc in success_docs}
+    threading.Thread(target=redeem_background, args=(payload,), daemon=True).start()
 
-            failed_docs = await firestore_stream(
-                db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players")
-            )
-            failed_ids = {doc.id for doc in failed_docs}
-
-            filtered_player_ids = []
-            captcha_failed_ids = {
-                doc.id for doc in failed_docs
-                if "驗證碼三次辨識皆失敗" in (doc.to_dict() or {}).get("reason", "") or
-                "CAPTCHA failed 3 times" in (doc.to_dict() or {}).get("reason", "")
-            }
-
-            for pid in player_ids:
-                if pid in already_redeemed_ids:
-                    logger.info(f"[{pid}] ✅ 已成功兌換，跳過")
-                    continue
-
-                if is_retry:
-                    if pid in failed_ids:
-                        logger.info(f"[{pid}] 🔁 Retry 模式，處理 failed_redeems 中的 ID")
-                        filtered_player_ids.append(pid)
-                    else:
-                        logger.info(f"[{pid}] 🔁 Retry 模式但不在 failed 中，跳過")
-                else:
-                    if pid in captcha_failed_ids:
-                        logger.info(f"[{pid}] ⛔ 跳過驗證碼三次辨識失敗的 ID")
-                        continue
-                    if pid in failed_ids:
-                        logger.info(f"[{pid}] ⚠️ 已在 failed_redeems，請使用 /retry_failed")
-                        continue
-                    filtered_player_ids.append(pid)
-
-        logger.info(f"⏩ 已跳過 {len(already_redeemed_ids)} 筆已成功或已領取的 ID（共輸入 {len(player_ids)} 筆）")
-
-        # 防呆檢查，確保過濾邏輯正確
-        if debug:
-            for pid in filtered_player_ids:
-                assert pid not in already_redeemed_ids, f"過濾失敗，{pid} 應已在 success_redeems 中"
-
-        if not filtered_player_ids:
-            duration = time.time() - start_time
-            logger.info("[All Success]所有 ID 皆已兌換成功或已領取過，無需再處理")
-            webhook_url = get_webhook_url_by_guild(guild_id)
-            if webhook_url:
-                try:
-                    summary_block = build_summary_block(
-                        code=code,
-                        success=len(all_success),
-                        fail=len(all_fail),
-                        skipped=len(player_ids) - len(filtered_player_ids),
-                        duration=duration,
-                        is_retry=is_retry
-                    )
-                    full_block = f"{summary_block}\n\n{failures_block or '無錯誤資料 / No error data'}"
-                    webhook_message = f"{header}\n```text\n{textwrap.indent(full_block, '  ')}\n```"
-                    send_long_webhook(webhook_url, webhook_message)
-                    logger.info(f"[Webhook] 已發送至指定伺服器的 webhook")
-                except Exception as e:
-                    logger.warning(f"[Webhook] 發送失敗：{e}")
-            else:
-                logger.warning(f"[Webhook] guild_id={guild_id} 未設定 webhook，跳過發送")
-            return
-
-        # 開始兌換處理
-        for i in range(0, len(filtered_player_ids), MAX_BATCH_SIZE):
-            batch = filtered_player_ids[i:i + MAX_BATCH_SIZE]
-            tasks = [run_redeem_with_retry(pid, code, debug=debug) for pid in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            await asyncio.sleep(1)
-
-            for r in results:
-                if isinstance(r, Exception):
-                    logger.error(f"[process_all] 任務發生例外，自動包裝：{r}")
-                    r = {
-                        "player_id": "Unknown",
-                        "success": False,
-                        "reason": str(r),
-                        "debug_logs": []
-                    }
-
-                if not isinstance(r, dict):
-                    logger.error(f"[process_all] 任務回傳非 dict，自動包裝：{r}")
-                    r = {
-                        "player_id": "Unknown",
-                        "success": False,
-                        "reason": str(r) if r else "None or invalid return",
-                        "debug_logs": []
-                    }
-
-                player_id = r.get("player_id")
-
-                reason = str(r.get("reason") or "")
-                message = str(r.get("message") or "")
-
-                if (
-                    r.get("success") is True or
-                    is_success_reason(reason, message)
-                ) and not any(err in (reason + message) for err in ["驗證碼三次辨識皆失敗", "CAPTCHA failed 3 times"]):
-                    all_success.append({
-                        "player_id": player_id,
-                        "message": message or "成功但無訊息"
-                    })
-                    logger.info(f"[{player_id}] ✅ 成功：{reason}")
-                    await firestore_set(
-                        db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players").document(player_id),
-                        {
-                            "message": reason,
-                            "timestamp": datetime.utcnow()
-                        }
-                    )
-
-                    await firestore_delete(
-                        db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players").document(player_id)
-                    )
-
-                    logger.info(f"[{r['player_id']}] 已從 failed_redeems 移除")
-                else:
-                    doc = await firestore_get(db.collection("ids").document(guild_id).collection("players").document(r["player_id"]))
-                    data = doc.to_dict() if doc.exists else {}
-                    name = data.get("name", "未知名稱")
-                    kingdom = data.get("kingdom", "未知")
-
-                    fail_doc = {
-                        "reason": reason or "未知錯誤",
-                        "updated_at": datetime.utcnow()
-                    }
-                    if name != "未知名稱" and kingdom != "未知":
-                        fail_doc["name"] = name
-                        fail_doc["kingdom"] = kingdom
-                    await firestore_set(
-                        db.collection("failed_redeems")
-                        .document(f"{guild_id}_{code}")
-                        .collection("players")
-                        .document(r["player_id"]),
-                        fail_doc
-                    )
-                    all_fail.append({
-                        "player_id": r.get("player_id"),
-                        "reason": r.get("reason"),
-                        "debug_logs": r.get("debug_logs", []),
-                        "debug_img_base64": r.get("debug_img_base64", None),
-                        "debug_html_base64": r.get("debug_html_base64", None)
-                    })
-
-                    if "驗證碼三次辨識皆失敗" in reason or "CAPTCHA failed 3 times" in reason:
-                        logger.warning(f"[{r['player_id']}] ❌ 失敗：{reason}")
-                        final_failed_ids.append(f"{r['player_id']}｜{kingdom}｜{name}")
-
-        duration = time.time() - start_time
-
-        captcha_3_fail = [r for r in all_fail if "驗證碼三次辨識皆失敗" in (r.get("reason") or "") or "CAPTCHA failed 3 times" in (r.get("reason") or "")]
-        failures_block = await format_failures_block(guild_id, all_fail)
-
-        summary_block = build_summary_block(
-            code=code,
-            success=len(all_success),
-            fail=len(all_fail),
-            skipped=len(player_ids) - len(filtered_player_ids),
-            duration=duration,
-            is_retry=is_retry
-        )
-
-        # ✏️ 組合完整 webhook 區塊
-        full_block = f"{summary_block}\n\n{failures_block.strip() or '無錯誤資料 / No error data'}"
-        webhook_message = f"{header}\n```text\n{textwrap.indent(full_block, '  ')}\n```"
-
-
-        webhook_url = get_webhook_url_by_guild(guild_id)
-        if webhook_url:
-            try:
-                send_long_webhook(webhook_url, webhook_message)
-                logger.info(f"[Webhook] 已發送至指定伺服器的 webhook")
-            except Exception as e:
-                logger.warning(f"[Webhook] 發送失敗：{e}")
-        else:
-            logger.warning(f"[Webhook] guild_id={guild_id} 未設定 webhook，跳過發送")
-
-    try:
-        payload = {
-            "code": code,
-            "player_ids": player_ids,
-            "debug": debug,
-            "guild_id": guild_id,
-            "retry": False
-        }
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(process_redeem(payload))
-    except Exception as e:
-        logger.exception(f"事件迴圈錯誤：{e}")
-
-    return jsonify({"message": "兌換已完成，Webhook 已送出（或已嘗試） / Redemption completed, webhook sent (or attempted)"}), 200
+    return jsonify({"message": "兌換任務已提交，背景處理中"}), 200
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
