@@ -35,11 +35,17 @@ tz = timezone("Asia/Taipei")
 from googletrans import Translator
 translator = Translator()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(threadName)s %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True
+)
+logger = logging.getLogger("redeem_web")
+app.logger = logger
 nest_asyncio.apply()
 loop = asyncio.get_event_loop_policy().get_event_loop()
-
+logger.info(f"[Startup] redeem_web 啟動中... PORT={os.environ.get('PORT', 8080)} LINE_CHANNEL_SECRET={'存在' if os.getenv('LINE_CHANNEL_SECRET') else '無'} CAPTCHA_API_KEY={'存在' if os.getenv('CAPTCHA_API_KEY') else '無'}")
 def build_summary_block(code, success, fail, skipped, duration, is_retry=False):
     return (
         f"=== {'Retry ' if is_retry else ''}Summary ===\n"
@@ -127,6 +133,7 @@ def is_success_reason(reason, message=""):
 REDEEM_RETRIES = 3
 # === 主流程 ===
 async def process_redeem(payload):
+    logger.info(f"[Redeem] 開始處理 guild_id={guild_id} code={code} retry={is_retry} 人數={len(player_ids)}")
     start_time = time.time()
     code = payload.get("code")
     player_ids = payload.get("player_ids")
@@ -267,8 +274,10 @@ async def process_redeem(payload):
             send_long_webhook(webhook_url, webhook_message)
         except Exception as e:
             logger.warning(f"[Webhook] 發送失敗：{e}")
+logger.info(f"[Redeem] 完成處理 guild_id={guild_id} code={code} 成功={len(all_success)} 失敗={len(all_fail)} 跳過={skipped_count}")
 
 async def run_redeem_with_retry(player_id, code, debug=False):
+    logger.info(f"[Redeem] {player_id} 開始兌換 retries={REDEEM_RETRIES}")
     debug_logs = []
 
     for redeem_retry in range(REDEEM_RETRIES + 1):
@@ -872,16 +881,19 @@ def redeem_submit():
 
     if not payload["guild_id"] or not payload["code"] or not isinstance(payload["player_ids"], list) or not payload["player_ids"]:
         return jsonify({"success": False, "reason": "缺少必要參數"}), 400
-
-    threading.Thread(
-        target=lambda: asyncio.run(process_redeem(payload)),
-        daemon=True
-    ).start()
-
+    logger.info(f"[API] /redeem_submit 收到請求：{data}")
+    def thread_runner():
+        try:
+            asyncio.run(process_redeem(payload))
+        except Exception as e:
+            logger.exception(f"[Thread] /redeem_submit 執行時發生例外：{e}")
+    threading.Thread(target=thread_runner, daemon=True).start()
+    logger.info(f"[API] /redeem_submit 已啟動後台任務")
     return jsonify({"message": "兌換任務已提交，背景處理中"}), 200
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
+    logger.info(f"[API] /update_names_api 收到請求 guild_id={guild_id}")
     try:
         data = request.json
         guild_id = data.get("guild_id")
@@ -1018,7 +1030,10 @@ def retry_failed():
             "guild_id": guild_id,
             "retry": True,
         }
-        loop.run_until_complete(process_redeem(payload))
+        try:
+            loop.run_until_complete(process_redeem(payload))
+        except Exception as e:
+            logger.exception(f"[Thread] /retry_failed 執行時發生例外：{e}")
         return jsonify({"success": True, "message": f"已針對 {len(player_ids)} 筆失敗紀錄重新兌換"}), 200
     except Exception as e:
         return jsonify({"success": False, "reason": str(e)}), 500
@@ -1035,6 +1050,7 @@ def health():
     return "Worker ready for redeeming!"
 
 async def self_ping_loop():
+    logger.info("[Self Ping] 執行中，準備 ping")
     while True:
         try:
             async with aiohttp.ClientSession() as session:
