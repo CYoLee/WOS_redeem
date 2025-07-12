@@ -185,6 +185,7 @@ async def process_redeem(payload, fetch_semaphore=None):
                 continue
             filtered_player_ids.append(pid)
     skipped_count = len(player_ids) - len(filtered_player_ids)
+    logger.info(f"[Redeem] filtered_player_ids：{len(filtered_player_ids)} 人，skipped_count={skipped_count}")
 
     if debug:
         for pid in filtered_player_ids:
@@ -210,7 +211,9 @@ async def process_redeem(payload, fetch_semaphore=None):
     for i in range(0, len(filtered_player_ids), MAX_BATCH_SIZE):
         batch = filtered_player_ids[i:i + MAX_BATCH_SIZE]
         tasks = [run_redeem_with_retry(pid, code, debug=debug) for pid in batch]
+        logger.info(f"[Redeem] 執行 batch：{batch}")
         results = await asyncio.gather(*tasks)
+        logger.info(f"[Redeem] batch 結束：{batch} results={len(results)}")
         await asyncio.sleep(1)
 
         for r in results:
@@ -282,8 +285,8 @@ async def process_redeem(payload, fetch_semaphore=None):
 
 async def run_redeem_with_retry(player_id, code, debug=False):
     logger.info(f"[Redeem] {player_id} 開始兌換 retries={REDEEM_RETRIES}")
+    logger.info(f"[Redeem] {player_id} run_redeem_with_retry 呼叫進入")
     debug_logs = []
-
     for redeem_retry in range(REDEEM_RETRIES + 1):
         try:
             result = await asyncio.wait_for(
@@ -565,6 +568,7 @@ async def solve_with_2captcha(b64_img):
 
     async with aiohttp.ClientSession() as session:
         try:
+            logger.info(f"[2Captcha] 提交開始，圖片大小：{len(b64_img)} bytes")
             async with session.post("http://2captcha.com/in.php", data=payload) as resp:
                 if resp.content_type != "application/json":
                     text = await resp.text()
@@ -585,6 +589,7 @@ async def solve_with_2captcha(b64_img):
         for _ in range(12):
             await asyncio.sleep(5)
             try:
+                logger.info(f"[2Captcha] 查詢結果中，ID={request_id}")
                 async with session.get(f"http://2captcha.com/res.php?key={api_key}&action=get&id={request_id}&json=1") as resp:
                     if resp.content_type != "application/json":
                         text = await resp.text()
@@ -699,6 +704,7 @@ async def _package_result(page, success, message, player_id, debug_logs, debug=F
 
 # === 共用函式：透過 Playwright 取得玩家名稱與王國 ===
 async def fetch_name_and_kingdom_common(pid):
+    logger.info(f"[{pid}] Playwright 啟動準備")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(locale="zh-TW")
@@ -732,6 +738,7 @@ async def fetch_name_and_kingdom_common(pid):
                 await page.wait_for_timeout(1000 + attempt * 500)
 
         await browser.close()
+        logger.info(f"[{player_id}] Playwright 已關閉")
         return name, kingdom
 
 async def fetch_and_store_if_missing(guild_id, pid, fetch_semaphore):
