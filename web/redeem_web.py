@@ -82,9 +82,10 @@ def send_long_webhook(webhook_url, content):
             logger.warning(f"[Webhook] 發送失敗：{e}")
 
 # === 初始化 ===
-app = Flask(__name__)
 logger = logging.getLogger("redeem_web")
+app = Flask(__name__)
 app.logger = logger
+
 # === 設定 ===
 OCR_MAX_RETRIES = 3
 PAGE_LOAD_TIMEOUT = 60000
