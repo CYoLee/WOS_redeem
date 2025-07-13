@@ -136,19 +136,24 @@ async def run_push_notify():
         .order_by("datetime")
         .limit(10)
     )
+    logger.info(f"[run_push_notify] 執行中，通知筆數：{len(docs)}")
     for doc in docs:
         data = doc.to_dict()
+        logger.info(f"[run_push_notify] 準備推播通知：{data}")
+        logger.info(f"[run_push_notify] 通知 guild_id：{data.get('guild_id')} channel_id：{data.get('channel_id')}")
         try:
             channel = bot.get_channel(int(data["channel_id"]))
             if not channel:
                 continue
             msg = f'{data.get("mention", "")}\n⏰ **活動提醒 / Reminder** ⏰\n{data["message"]}'
+            logger.info(f"[run_push_notify] 發送 Discord 頻道 ID：{data['channel_id']}")
             await channel.send(msg)
 
             # ✅ 新增：LINE 同步推播
+            logger.info(f"[run_push_notify] 發送 LINE 群組內容：{data['message']}")
             line_msg = f"⏰ 活動提醒 / Reminder ⏰\n{data['message']}"
             await send_to_line_group(line_msg)
-
+            logger.info(f"[run_push_notify] 刪除 Firestore 通知紀錄：{doc.id}")
             await firestore_delete(db.collection("notifications").document(doc.id))
         except Exception as e:
             logger.warning(f"[http_push_notify] 發送失敗：{e}")
@@ -458,10 +463,12 @@ async def trigger_backend_redeem(interaction: discord.Interaction, code: str, pl
             "guild_id": str(interaction.guild_id),
             "debug": False
         }
-
+        logger.info(f"[trigger_backend_redeem] 來源頻道：{interaction.channel_id} 來源 guild：{interaction.guild_id}")
         async with aiohttp.ClientSession() as session:
             try:
+                logger.info(f"[trigger_backend_redeem] 發送 Redeem 請求中，payload：{payload}")
                 async with session.post(redeem_submit_url, json=payload, timeout=30) as resp:
+                    logger.info(f"[trigger_backend_redeem] 後端回應狀態：{resp.status}")
                     if resp.status == 200:
                         logger.info(f"[{guild_id}] ✅ 成功觸發後端兌換流程（未等待完成）")
                     else:
@@ -531,6 +538,7 @@ async def add_notify(
     try:
         await interaction.response.defer(thinking=True, ephemeral=True)
         guild_id = str(interaction.guild_id)
+        logger.info(f"[add_notify] guild_id={guild_id} channel={target_channel.id} mention={mention} date={date} time={time}")
         dates = [d.strip() for d in date.split(",")]
         times = [t.strip() for t in time.split(",")]
         message = message.replace("\\n", "\n")  # ✅ 支援換行
@@ -545,6 +553,7 @@ async def add_notify(
                     return
 
                 try:
+                    logger.info(f"[add_notify] 準備新增提醒：{d} {t} 至頻道 {target_channel.id} mention={mention}")
                     await run_in_executor(db.collection("notifications").add, {
                         "channel_id": str(target_channel.id),
                         "guild_id": guild_id,
@@ -552,6 +561,7 @@ async def add_notify(
                         "message": message,
                         "mention": mention
                     })
+                    logger.info(f"[add_notify] 成功新增提醒：{dt} 至 {target_channel.id}")
                     count += 1
                 except Exception as db_err:
                     logger.error(f"❌ Firestore 寫入失敗：{db_err}")
@@ -893,6 +903,7 @@ async def report_notify_failure(data, error_detail: str):
         f"❗ 錯誤：{error_detail}"
     )
     try:
+        logger.warning(f"[report_notify_failure] 準備傳送錯誤通報，內容：{content}")
         async with aiohttp.ClientSession() as session:
             await session.post(webhook_url, json={"content": content})
     except Exception as e:
@@ -913,6 +924,11 @@ async def report_notify_failure(data, error_detail: str):
 async def on_ready():
     logger.info(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
     # === 發送 webhook 啟動通知（僅一次）===
+    logger.info("[on_ready] Bot 已啟動，準備完成。")
+    logger.info(f"[on_ready] Guild IDs：{[g.id for g in bot.guilds]}")
+    logger.info(f"[on_ready] TOKEN 前五碼：{TOKEN[:5]}")
+    logger.info(f"[on_ready] ADD_ID_WEBHOOK_URL 存在：{bool(os.getenv('ADD_ID_WEBHOOK_URL'))}")
+    logger.info(f"[on_ready] LINE_NOTIFY_GROUP_ID：{os.getenv('LINE_NOTIFY_GROUP_ID')}")
     await send_webhook_message(
         "📡 GuaGuaBOT 已成功啟動！\n✅ 雙語指令模式已啟用，等待使用者互動中。\n🔄 機器人狀態穩定運作中。\n\n"
         "📡 GuaGuaBOT has started successfully!\n✅ Bilingual command mode enabled, standing by.\n🔄 Bot status: stable and ready."

@@ -32,6 +32,7 @@ from datetime import datetime
 from pytz import timezone
 from datetime import datetime, timedelta
 tz = timezone("Asia/Taipei")
+from datetime import timezone
 from googletrans import Translator
 translator = Translator()
 from asyncio import BoundedSemaphore
