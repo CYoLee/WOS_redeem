@@ -1,16 +1,22 @@
-#worker_notify_loop.py
+# worker_notify_loop.py
 import os
-import asyncio
 import time
-from redeem_web import check_and_send_notify
+import requests
 
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    print(f"[Worker] 啟動中，INTERNAL_SECRET 頭五碼：{os.getenv('INTERNAL_SECRET')[:5]}...")
+    secret = os.getenv("INTERNAL_SECRET")
+    url = os.getenv("INTERNAL_PUSH_URL")  # 新增這個環境變數
+
+    if not secret or not url:
+        print("❌ INTERNAL_SECRET 或 INTERNAL_PUSH_URL 未設定")
+        exit(1)
+
+    print(f"[Worker] 啟動中，推播模式切換為呼叫 internal_push_notify URL：{url}")
+
     while True:
         try:
-            loop.run_until_complete(check_and_send_notify())
+            resp = requests.post(url, json={"secret": secret}, timeout=10)
+            print(f"[Worker] internal_push_notify 呼叫完成：{resp.status_code} {resp.text}")
         except Exception as e:
             print(f"[Worker Error] {e}")
         time.sleep(30)

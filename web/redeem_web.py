@@ -1060,7 +1060,32 @@ def send_to_discord(channel_id, mention, message):
         content = f"{mention}\n⏰ **活動提醒 / Reminder** ⏰\n{message}"
         send_long_webhook(channel_id, content)
     else:
-        logger.warning(f"[Notify] 非 webhook URL，未處理：{channel_id}")
+        try:
+            import discord
+            from discord.ext import commands
+
+            token = os.getenv("DISCORD_TOKEN")
+            if not token:
+                logger.warning("[Notify] 沒有設定 DISCORD_TOKEN，無法發送到頻道")
+                return
+
+            intents = discord.Intents.default()
+            intents.guilds = True
+            intents.messages = True
+
+            bot = commands.Bot(command_prefix="!", intents=intents)
+
+            @bot.event
+            async def on_ready():
+                channel = bot.get_channel(int(channel_id))
+                if channel:
+                    await channel.send(f"{mention}\n⏰ **活動提醒 / Reminder** ⏰\n{message}")
+                await bot.close()
+
+            bot.run(token)
+
+        except Exception as e:
+            logger.warning(f"[Notify] 發送 Discord 頻道失敗：{e}")
 
 @app.route("/")
 def health():
