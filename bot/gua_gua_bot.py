@@ -788,6 +788,28 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
         await interaction.followup.send(
             f"❌ 錯誤：{e}\n⚠️ 發送說明時發生錯誤 / Help command failed.", ephemeral=True)
 
+@tree.command(name="line_quota", description="查看本月 LINE 推播用量 / Check LINE push message quota")
+@interaction_guard
+async def line_quota(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{REDEEM_API_URL}/line_quota") as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    await interaction.followup.send(f"❌ API 錯誤：{resp.status}\n{text}", ephemeral=True)
+                    return
+                result = await resp.json()
+
+        if result.get("success"):
+            count = result.get("quota", 0)
+            await interaction.followup.send(f"📊 當月 LINE 推播用量：{count} 則（免費額度 200 則）", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ 查詢失敗：{result.get('reason')}", ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
+
 async def send_to_line_group(message: str):
     line_token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
     group_id = os.getenv("LINE_NOTIFY_GROUP_ID")
@@ -824,70 +846,6 @@ async def send_to_line_group(message: str):
     except Exception as e:
         logger.warning(f"[send_to_line_group] ❌ 發送失敗：{e}")
 
-# === 通知推播 ===
-# @tasks.loop(minutes=1)
-# async def notify_loop():
-#     try:
-#         now = datetime.now(tz).replace(second=0, microsecond=0)
-#         hour, minute = now.hour, now.minute
-
-#         # ✅ 僅在有效時間區段才執行（UTC+8）
-#         if not (
-#             (hour == 7 and minute >= 50) or
-#             (hour == 8 and minute <= 10) or
-#             (hour == 19 and minute >= 50) or
-#             (20 <= hour <= 21) or
-#             (hour == 22 and minute <= 10)
-#         ):
-#             return
-
-#         future = now + timedelta(seconds=30)
-#         docs = await firestore_stream(
-#             db.collection("notifications")
-#             .where("datetime", ">=", now)
-#             .where("datetime", "<", future)
-#             .order_by("datetime")
-#             .limit(10)  # ✅ 每次最多處理 10 筆，避免負載過重
-#         )
-
-#         for doc in docs:
-#             data = doc.to_dict()
-#             success = False
-#             try:
-#                 channel = bot.get_channel(int(data["channel_id"]))
-#                 if not channel:
-#                     raise ValueError(f"找不到頻道 / Channel not found: {data['channel_id']}")
-
-#                 discord_message = (
-#                     f'{data.get("mention", "")} \n⏰ **活動提醒 / Reminder** ⏰\n{data["message"]}'
-#                 )
-
-#                 # ✅ 發送 Discord 訊息
-#                 await channel.send(discord_message)
-
-#                 # ✅ 同步推送到 LINE 群組
-#                 try:
-#                     line_message = f"⏰ 活動提醒 / Reminder ⏰\n{data['message']}"
-#                     await send_to_line_group(line_message)
-#                 except Exception as e:
-#                     logger.warning(f"[notify_loop] ⚠️ LINE 推播失敗：{e}")
-
-#                 logger.info(f"[notify_loop] ✅ 已發送提醒至 {channel.name} + LINE 群組")
-#                 success = True
-
-#             except discord.HTTPException as e:
-#                 logger.warning(f"[notify_loop] ❌ Discord 傳送錯誤：{e.status} - {e.text}", exc_info=True)
-#                 await report_notify_failure(data, f"Discord API Error {e.status} - {e.text}")
-#             except Exception as e:
-#                 logger.warning(f"[notify_loop] ❌ 其他發送提醒失敗：{repr(e)} | data: {data}", exc_info=True)
-#                 await report_notify_failure(data, f"Unexpected Error: {repr(e)}")
-
-#             if success:
-#                 await firestore_delete(db.collection("notifications").document(doc.id))
-
-#     except Exception as outer:
-#         logger.error(f"[notify_loop] ❗ 外層任務錯誤：{outer}", exc_info=True)
-
 # === 提醒失敗時通報 webhook（選用） ===
 async def report_notify_failure(data, error_detail: str):
     webhook_url = os.getenv("ADD_ID_WEBHOOK_URL")
@@ -909,16 +867,6 @@ async def report_notify_failure(data, error_detail: str):
     except Exception as e:
         logger.warning(f"[Webhook] 發送錯誤通報失敗：{e}")
 
-# === 自我 ping 防止休眠 ===
-# @tasks.loop(minutes=30)
-# async def external_ping_loop():
-#     try:
-#         async with aiohttp.ClientSession() as session:
-#             async with session.get("https://gua-gua-bot-discord-968119669406.asia-east1.run.app") as resp:
-#                 logger.info(f"[External Ping] Public status: {resp.status}")
-#     except Exception as e:
-#         logger.warning(f"[Self Ping] 失敗 / Failed: {e}")
-
 # === 上線後同步 ===
 @bot.event
 async def on_ready():
@@ -939,11 +887,6 @@ async def on_ready():
         logger.info(f"✅ Synced {len(synced)} global commands: {[c.name for c in synced]}")
     except Exception as e:
         logger.info(f"❌ Failed to sync commands: {e}")
-    # if not notify_loop.is_running():
-    #     notify_loop.start()
-    # if not external_ping_loop.is_running():
-    #     external_ping_loop.start()
-
 
 # === Webhook 發送函式（啟動通知） ===
 async def send_webhook_message(content: str):

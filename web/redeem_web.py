@@ -1055,6 +1055,28 @@ def retry_failed():
     except Exception as e:
         return jsonify({"success": False, "reason": str(e)}), 500
 
+@app.route("/line_quota", methods=["GET"])
+def line_quota():
+    try:
+        token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+        if not token:
+            return jsonify({"success": False, "reason": "LINE_CHANNEL_ACCESS_TOKEN 未設定"}), 500
+
+        headers = {
+            "Authorization": f"Bearer {token}"
+        }
+        resp = requests.get("https://api.line.me/v2/bot/message/quota/consumption", headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return jsonify({"success": False, "reason": f"LINE API 回應錯誤：{resp.status_code}", "response": resp.text}), 500
+
+        result = resp.json()
+        return jsonify({
+            "success": True,
+            "quota": result.get("totalUsage", 0)
+        })
+    except Exception as e:
+        return jsonify({"success": False, "reason": str(e)}), 500
+
 def send_to_discord(channel_id, mention, message):
     if "discord.com/api/webhooks/" in channel_id:
         content = f"{mention}\n⏰ **活動提醒 / Reminder** ⏰\n{message}"
@@ -1090,17 +1112,6 @@ def send_to_discord(channel_id, mention, message):
 @app.route("/")
 def health():
     return "Worker ready for redeeming!"
-
-async def self_ping_loop():
-    logger.info("[Self Ping] 執行中，準備 ping")
-    while True:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get("https://gua-gua-bot-worker-649040484909.asia-east1.run.app") as resp:
-                    logger.info(f"[Self Ping] Worker 回應狀態 / Status: {resp.status}")
-        except Exception as e:
-            logger.warning(f"[Self Ping] Worker 失敗 / Failed: {e}")
-        await asyncio.sleep(240)  # 每 4 分鐘 ping 一次
 
 from hashlib import sha256
 from hmac import compare_digest, new as hmac_new
