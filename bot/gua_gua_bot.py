@@ -517,12 +517,6 @@ async def retry_failed(interaction: discord.Interaction, code: str):
                     except Exception as e:
                         logger.warning(f"[fire_and_forget_retry] 發送失敗：{e}")
 
-            asyncio.create_task(fire_and_forget_retry(payload))
-            await safe_send(interaction, f"✅ 已提交 {len(player_ids)} 筆 retry 任務（背景執行）")
-
-                if resp.status != 200:
-                    error_message = await resp.text()
-                    logger.warning(f"[retry_failed] Resp not 200: {error_message}")
     except Exception as e:
         logger.exception(f"[retry_failed] 發送 API 時出錯")
         await safe_send(interaction, f"❌ 發生錯誤 / Error: {e}")
