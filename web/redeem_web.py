@@ -149,7 +149,7 @@ async def process_redeem(payload, fetch_semaphore=None):
     MAX_BATCH_SIZE = 1
     all_success = []
     all_fail = []
-
+    logger.info(f"[process_redeem] 收到 payload：{payload}")
     await asyncio.gather(*(fetch_and_store_if_missing(guild_id, pid, fetch_semaphore) for pid in player_ids))
     logger.info("準備讀取 success_redeems")
     success_docs = await firestore_stream(
@@ -278,12 +278,16 @@ async def process_redeem(payload, fetch_semaphore=None):
     full_block = f"{summary_block}\n\n{failures_block.strip() or '無錯誤資料 / No error data'}"
     webhook_message = f"{header}\n```text\n{textwrap.indent(full_block, '  ')}\n```"
 
-    webhook_url = get_webhook_url_by_guild(guild_id)
+    webhook_url = os.getenv("ADD_ID_WEBHOOK_URL")
     if webhook_url:
         try:
-            send_long_webhook(webhook_url, webhook_message)
+            final_summary = f"{header}\n```text\n{textwrap.indent(full_block, '  ')}\n```"
+            if len(final_summary) > 1800:
+                final_summary = final_summary[:1800] + "\n...（訊息過長已截斷）"
+            requests.post(webhook_url, json={"content": final_summary}, timeout=10)
+            logger.info(f"[Webhook] 兌換結束總結已發送到 ADD_ID_WEBHOOK_URL")
         except Exception as e:
-            logger.warning(f"[Webhook] 發送失敗：{e}")
+            logger.warning(f"[Webhook] 發送兌換總結失敗：{e}")
 
 async def run_redeem_with_retry(player_id, code, debug=False):
     logger.info(f"[Redeem] {player_id} 開始兌換 retries={REDEEM_RETRIES}")
@@ -895,15 +899,18 @@ def redeem_submit():
         "guild_id": data.get("guild_id"),
         "retry": False
     }
-
+    print("=== TEST LOG === 任務收到")
+    logger.info(f"=== TEST LOG === 任務收到 {payload}")
     if not payload["guild_id"] or not payload["code"] or not isinstance(payload["player_ids"], list) or not payload["player_ids"]:
         return jsonify({"success": False, "reason": "缺少必要參數"}), 400
     logger.info(f"[API] /redeem_submit 收到請求：{data}")
     def thread_runner():
+        logger.info("[Thread] /redeem_submit thread_runner 啟動！")
         try:
             asyncio.run(process_redeem(payload))
         except Exception as e:
             logger.exception(f"[Thread] /redeem_submit 執行時發生例外：{e}")
+
     threading.Thread(target=thread_runner, daemon=True).start()
     logger.info(f"[API] /redeem_submit 已啟動後台任務")
     return jsonify({"message": "兌換任務已提交，背景處理中"}), 200
