@@ -509,7 +509,17 @@ async def retry_failed(interaction: discord.Interaction, code: str):
         }
         await safe_send(interaction, f"🎁 重新兌換 {len(player_ids)} 個失敗的 ID 已發送到後端進行處理")
         async with aiohttp.ClientSession() as session:
-            async with session.post(retry_failed_url, json=payload) as resp:
+            async def fire_and_forget_retry(payload):
+                async with aiohttp.ClientSession() as session:
+                    try:
+                        async with session.post(retry_failed_url, json=payload):
+                            pass
+                    except Exception as e:
+                        logger.warning(f"[fire_and_forget_retry] 發送失敗：{e}")
+
+            asyncio.create_task(fire_and_forget_retry(payload))
+            await safe_send(interaction, f"✅ 已提交 {len(player_ids)} 筆 retry 任務（背景執行）")
+
                 if resp.status != 200:
                     error_message = await resp.text()
                     logger.warning(f"[retry_failed] Resp not 200: {error_message}")

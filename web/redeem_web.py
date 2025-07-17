@@ -1026,11 +1026,14 @@ def retry_failed():
     if not code:
         return jsonify({"success": False, "reason": "缺少 code"}), 400
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    failed_docs = loop.run_until_complete(
-        firestore_stream(db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players"))
-    )
+    def thread_runner(payload):
+        try:
+            asyncio.run(process_redeem(payload))
+        except Exception as e:
+            logger.exception(f"[Thread] /retry_failed 執行時發生例外：{e}")
+
+    threading.Thread(target=thread_runner, args=(payload,), daemon=True).start()
+    return jsonify({"success": True, "message": f"已針對 {len(player_ids)} 筆失敗紀錄重新兌換"}), 200
 
     player_ids = [doc.id for doc in failed_docs]
 
