@@ -220,7 +220,8 @@ async def process_redeem(payload, fetch_semaphore=None):
 
     async def limited_redeem(pid):
         async with sema:
-            return await run_redeem_with_retry(pid, code, debug=debug)
+            result = await run_redeem_with_retry(pid, code, debug=debug)
+            return result or {"player_id": pid, "success": False, "reason": "None returned"}
 
     logger.info(f"[Redeem] 開始平行處理 {len(filtered_player_ids)} 位玩家")
 
@@ -234,7 +235,7 @@ async def process_redeem(payload, fetch_semaphore=None):
         if isinstance(r, Exception):
             logger.error(f"[process_all] 任務發生例外，自動包裝：{r}")
             r = {
-                "player_id": "Unknown",
+                "player_id": "pid",
                 "success": False,
                 "reason": str(r),
                 "debug_logs": []
@@ -243,7 +244,7 @@ async def process_redeem(payload, fetch_semaphore=None):
         if not isinstance(r, dict):
             logger.error(f"[process_all] 任務回傳非 dict，自動包裝：{r}")
             r = {
-                "player_id": "Unknown",
+                "player_id": "pid",
                 "success": False,
                 "reason": str(r) if r else "None or invalid return",
                 "debug_logs": []
@@ -308,8 +309,9 @@ async def process_redeem(payload, fetch_semaphore=None):
     if webhook_url:
         try:
             final_summary = f"{header}\n```text\n{textwrap.indent(full_block, '  ')}\n```"
-            if len(final_summary) > 1800:
-                final_summary = final_summary[:1800] + "\n...（訊息過長已截斷）"
+            for i in range(0, len(full_block), 1800):
+                content = f"{header}\n```text\n{full_block[i:i+1800]}\n```"
+                requests.post(webhook_url, json={"content": content}, timeout=10)
             requests.post(webhook_url, json={"content": final_summary}, timeout=10)
             logger.info(f"[Webhook] 兌換結束總結已發送到 ADD_ID_WEBHOOK_URL")
         except Exception as e:
@@ -363,6 +365,16 @@ async def run_redeem_with_retry(player_id, code, debug=False):
         else:
             return result
 
+    # fallback 預設錯誤 result
+    if "result" not in locals() or not isinstance(result, dict):
+        result = {
+            "player_id": player_id,
+            "success": False,
+            "reason": "全部嘗試皆失敗，無 result 回傳",
+            "debug_logs": debug_logs
+        }
+    elif "player_id" not in result:
+        result["player_id"] = player_id
 
     return result
 
