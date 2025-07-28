@@ -109,21 +109,23 @@ if "private_key" in cred_json:
 if not firebase_admin._apps:
     firebase_admin.initialize_app(credentials.Certificate(cred_json))
 db = firestore.client()
+
+# === Firestore Async Wrapper ===
 async def run_in_executor(func):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, func)
 
 async def firestore_get(ref):
-    return await run_in_executor(ref.get)
+    return await run_in_executor(functools.partial(ref.get))
 
 async def firestore_set(ref, data, merge=False):
-    return await run_in_executor(ref.set, data, merge=merge)
+    return await run_in_executor(functools.partial(ref.set, data, merge=merge))
 
 async def firestore_update(ref, data):
-    return await run_in_executor(ref.update, data)
+    return await run_in_executor(functools.partial(ref.update, data))
 
 async def firestore_delete(ref):
-    return await run_in_executor(ref.delete)
+    return await run_in_executor(functools.partial(ref.delete))
 
 async def firestore_stream(ref):
     return await run_in_executor(lambda: list(ref.stream()))
