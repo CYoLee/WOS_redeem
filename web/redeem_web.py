@@ -326,6 +326,14 @@ async def process_redeem(payload, fetch_semaphore=None):
             logger.info(f"[Webhook] 兌換結束總結已發送到 ADD_ID_WEBHOOK_URL")
         except Exception as e:
             logger.warning(f"[Webhook] 發送兌換總結失敗：{e}")
+            
+async def store_redeem_result(result):
+    try:
+        doc_ref = firestore_client.collection("redeem_results").document(result["player_id"])
+        await asyncio.get_event_loop().run_in_executor(None, lambda: doc_ref.set(result, merge=True))
+        logger.info(f"[store] ✅ Firestore 寫入完成：{result['player_id']}")
+    except Exception as e:
+        logger.warning(f"[{result['player_id']}] ❌ 寫入 Firestore 發生錯誤：{e}")
 
 async def run_redeem_with_retry(player_id, code, debug=False):
     logger.info(f"[Redeem] {player_id} 開始兌換 retries={REDEEM_RETRIES}")
