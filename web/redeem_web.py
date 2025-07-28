@@ -220,10 +220,16 @@ async def process_redeem(payload, fetch_semaphore=None):
 
     async def limited_redeem(pid):
         async with sema:
-            result = await run_redeem_with_retry(pid, code, debug=debug)
-            if not result:
-                result = {}
-            result["player_id"] = pid  # ← 強制補上
+            try:
+                result = await run_redeem_with_retry(pid, code, debug=debug)
+                result = result or {}
+            except Exception as e:
+                result = {"success": False, "reason": str(e), "message": "", "debug_logs": []}
+            # 強制補齊必要欄位
+            result["player_id"] = pid
+            result["success"] = result.get("success", False)
+            result["reason"] = result.get("reason", "")
+            result["message"] = result.get("message", "")
             return result
 
     logger.info(f"[Redeem] 開始平行處理 {len(filtered_player_ids)} 位玩家")
