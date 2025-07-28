@@ -36,7 +36,11 @@ from datetime import timezone
 from googletrans import Translator
 translator = Translator()
 from asyncio import BoundedSemaphore
-DEFAULT_FETCH_LIMIT = 10
+from concurrent.futures import ThreadPoolExecutor
+REDEEM_THREAD_POOL = ThreadPoolExecutor(max_workers=4)
+GLOBAL_FETCH_SEMAPHORE = BoundedSemaphore(4)
+DEFAULT_FETCH_LIMIT = 4
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -105,10 +109,9 @@ if "private_key" in cred_json:
 if not firebase_admin._apps:
     firebase_admin.initialize_app(credentials.Certificate(cred_json))
 db = firestore.client()
-async def run_in_executor(func, *args, **kwargs):
+async def run_in_executor(func):
     loop = asyncio.get_event_loop()
-    partial_func = functools.partial(func, *args, **kwargs)
-    return await loop.run_in_executor(None, partial_func)
+    return await loop.run_in_executor(None, func)
 
 async def firestore_get(ref):
     return await run_in_executor(ref.get)
@@ -150,7 +153,7 @@ async def process_redeem(payload, fetch_semaphore=None):
     all_success = []
     all_fail = []
     logger.info(f"[process_redeem] 收到 payload：{payload}")
-    await asyncio.gather(*(fetch_and_store_if_missing(guild_id, pid, fetch_semaphore) for pid in player_ids))
+    await asyncio.gather(*(fetch_and_store_if_missing(guild_id, pid, GLOBAL_FETCH_SEMAPHORE) for pid in player_ids))
     logger.info("準備讀取 success_redeems")
     success_docs = await firestore_stream(
         db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players")
@@ -766,6 +769,7 @@ async def fetch_and_store_if_missing(guild_id, pid, fetch_semaphore):
         else:
             logger.warning(f"[{pid}][Warn]名稱或王國未知，未寫入")
     logger.info(f"[{pid}] fetch_and_store_if_missing 結束")
+    doc = await run_in_executor(ref.get)
 
 def is_valid_player_data(name: str, kingdom: str) -> bool:
     return name != "未知名稱" and kingdom != "未知"
@@ -912,7 +916,8 @@ def redeem_submit():
             logger.exception(f"[Thread] /redeem_submit 執行時發生例外：{e}")
 
     threading.Thread(target=thread_runner, daemon=True).start()
-    logger.info(f"[API] /redeem_submit 已啟動後台任務")
+    logger.info(f"[ThreadPool] 提交 redeem 任務，payload 玩家數={len(payload['player_ids'])}")
+    REDEEM_THREAD_POOL.submit(lambda: asyncio.run(process_redeem(payload)))
     return jsonify({"message": "兌換任務已提交，背景處理中"}), 200
 
 @app.route("/update_names_api", methods=["POST"])
@@ -1040,6 +1045,7 @@ def retry_failed():
             logger.exception(f"[Thread] /retry_failed 執行時發生例外：{e}")
 
     threading.Thread(target=thread_runner, args=(payload,), daemon=True).start()
+    REDEEM_THREAD_POOL.submit(lambda: asyncio.run(process_redeem(payload)))
     return jsonify({"success": True, "message": f"已針對 {len(player_ids)} 筆失敗紀錄重新兌換"}), 200
 
     player_ids = [doc.id for doc in failed_docs]
@@ -1400,6 +1406,9 @@ def send_to_line_group(message):
             logger.info(f"[LINE] ✅ 推播成功：{resp.status_code} | Message: {message}")
     except Exception as e:
         logger.warning(f"[LINE] ❌ 推播發生例外：{e}")
+
+def thread_runner(coro):
+    asyncio.run(coro)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
