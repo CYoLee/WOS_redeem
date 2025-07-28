@@ -235,7 +235,7 @@ async def process_redeem(payload, fetch_semaphore=None):
         if isinstance(r, Exception):
             logger.error(f"[process_all] 任務發生例外，自動包裝：{r}")
             r = {
-                "player_id": "pid",
+                "player_id": pid,
                 "success": False,
                 "reason": str(r),
                 "debug_logs": []
@@ -244,7 +244,7 @@ async def process_redeem(payload, fetch_semaphore=None):
         if not isinstance(r, dict):
             logger.error(f"[process_all] 任務回傳非 dict，自動包裝：{r}")
             r = {
-                "player_id": "pid",
+                "player_id": pid,
                 "success": False,
                 "reason": str(r) if r else "None or invalid return",
                 "debug_logs": []
@@ -309,9 +309,9 @@ async def process_redeem(payload, fetch_semaphore=None):
     if webhook_url:
         try:
             final_summary = f"{header}\n```text\n{textwrap.indent(full_block, '  ')}\n```"
-            for i in range(0, len(full_block), 1800):
-                content = f"{header}\n```text\n{full_block[i:i+1800]}\n```"
-                requests.post(webhook_url, json={"content": content}, timeout=10)
+        for i in range(0, len(full_block), 1800):
+            content = f"{header}\n```text\n{full_block[i:i+1800]}\n```"
+            requests.post(webhook_url, json={"content": content}, timeout=10)
             requests.post(webhook_url, json={"content": final_summary}, timeout=10)
             logger.info(f"[Webhook] 兌換結束總結已發送到 ADD_ID_WEBHOOK_URL")
         except Exception as e:
