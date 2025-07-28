@@ -1412,5 +1412,5 @@ def thread_runner(coro):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    threading.Thread(target=lambda: loop.run_until_complete(self_ping_loop()), daemon=True).start()
+    #threading.Thread(target=lambda: loop.run_until_complete(self_ping_loop()), daemon=True).start()
     app.run(host="0.0.0.0", port=port)
