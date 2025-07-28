@@ -331,6 +331,8 @@ async def run_redeem_with_retry(player_id, code, debug=False):
     logger.info(f"[Redeem] {player_id} 開始兌換 retries={REDEEM_RETRIES}")
     logger.info(f"[Redeem] {player_id} run_redeem_with_retry 呼叫進入")
     debug_logs = []
+    result = None  # 確保最後 fallback 時也有值
+
     for redeem_retry in range(REDEEM_RETRIES + 1):
         try:
             result = await asyncio.wait_for(
@@ -339,12 +341,13 @@ async def run_redeem_with_retry(player_id, code, debug=False):
             )
         except asyncio.TimeoutError:
             logger.error(f"[{player_id}] 第 {redeem_retry + 1} 次：超過 90 秒 timeout")
-            return {
+            result = {
                 "success": False,
                 "reason": "Timeout：單人兌換超過 90 秒",
                 "player_id": player_id,
                 "debug_logs": debug_logs
             }
+            break
 
         if result is None or not isinstance(result, dict):
             logger.error(f"[{player_id}] 第 {redeem_retry + 1} 次：_redeem_once 回傳 None 或格式錯誤 → {result}")
@@ -361,10 +364,10 @@ async def run_redeem_with_retry(player_id, code, debug=False):
             continue
 
         if is_success_reason(result.get("reason", ""), result.get("message", "")):
-            return result
+            break  # 成功，跳出 retry
 
         if "登入失敗" in (result.get("reason") or "") or "請先登入" in (result.get("reason") or ""):
-            return result
+            break
 
         if any(k in (result.get("reason") or "") for k in RETRY_KEYWORDS):
             debug_logs.append({
@@ -373,18 +376,13 @@ async def run_redeem_with_retry(player_id, code, debug=False):
             })
             await asyncio.sleep(2 + redeem_retry)
         else:
-            return result
+            break
 
-    # fallback 預設錯誤 result
-    if "result" not in locals() or not isinstance(result, dict):
-        result = {
-            "player_id": player_id,
-            "success": False,
-            "reason": "全部嘗試皆失敗，無 result 回傳",
-            "debug_logs": debug_logs
-        }
-    elif "player_id" not in result:
-        result["player_id"] = player_id
+    # ✅ 最終 Firestore 寫入（不論成功與否）
+    try:
+        await store_redeem_result(player_id, result)
+    except Exception as e:
+        logger.warning(f"[{player_id}] ❌ 寫入 Firestore 發生錯誤：{e}")
 
     return result
 
