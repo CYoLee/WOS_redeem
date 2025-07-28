@@ -246,6 +246,11 @@ async def process_redeem(payload, fetch_semaphore=None):
                 "debug_logs": []
             }
 
+        pid = r.get("player_id")
+        if not pid or pid == "Unknown":
+            logger.warning(f"[Redeem] 無法辨識 player_id，略過 Firestore 寫入：{r}")
+            continue
+
         reason = str(r.get("reason", "") if isinstance(r, dict) else r or "")
         message = str(r.get("message", "") if isinstance(r, dict) else "")
 
