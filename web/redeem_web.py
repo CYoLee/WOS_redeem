@@ -895,6 +895,7 @@ def list_ids():
 
 @app.route("/redeem_submit", methods=["POST"])
 def redeem_submit():
+    
     data = request.json
     payload = {
         "code": data.get("code"),
@@ -903,19 +904,12 @@ def redeem_submit():
         "guild_id": data.get("guild_id"),
         "retry": False
     }
+    logger.info(f"[redeem_submit] 收到請求：{player_ids=} {redeem_code=} notify_discord={notify_discord} notify_line={notify_line}")
     print("=== TEST LOG === 任務收到")
     logger.info(f"=== TEST LOG === 任務收到 {payload}")
     if not payload["guild_id"] or not payload["code"] or not isinstance(payload["player_ids"], list) or not payload["player_ids"]:
         return jsonify({"success": False, "reason": "缺少必要參數"}), 400
     logger.info(f"[API] /redeem_submit 收到請求：{data}")
-    def thread_runner():
-        logger.info("[Thread] /redeem_submit thread_runner 啟動！")
-        try:
-            asyncio.run(process_redeem(payload))
-        except Exception as e:
-            logger.exception(f"[Thread] /redeem_submit 執行時發生例外：{e}")
-
-    threading.Thread(target=thread_runner, daemon=True).start()
     logger.info(f"[ThreadPool] 提交 redeem 任務，payload 玩家數={len(payload['player_ids'])}")
     REDEEM_THREAD_POOL.submit(lambda: asyncio.run(process_redeem(payload)))
     return jsonify({"message": "兌換任務已提交，背景處理中"}), 200

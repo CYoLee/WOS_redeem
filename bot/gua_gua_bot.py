@@ -463,6 +463,7 @@ async def trigger_backend_redeem(interaction: discord.Interaction, code: str, pl
             "guild_id": str(interaction.guild_id),
             "debug": False
         }
+        logger.info(f"[redeem_submit] 發送至 API：{url} payload={payload}")
         logger.info(f"[trigger_backend_redeem] 來源頻道：{interaction.channel_id} 來源 guild：{interaction.guild_id}")
         async with aiohttp.ClientSession() as session:
             try:
