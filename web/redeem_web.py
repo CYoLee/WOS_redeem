@@ -228,6 +228,7 @@ async def process_redeem(payload, fetch_semaphore=None):
     )
 
     for r in results:
+        logger.debug(f"[DEBUG] 任務回傳結果 r = {r}")
         if isinstance(r, Exception):
             logger.error(f"[process_all] 任務發生例外，自動包裝：{r}")
             r = {
@@ -253,32 +254,41 @@ async def process_redeem(payload, fetch_semaphore=None):
 
         reason = str(r.get("reason", "") if isinstance(r, dict) else r or "")
         message = str(r.get("message", "") if isinstance(r, dict) else "")
-
+        logger.debug(f"[DEBUG] 判斷 success：pid={pid} reason={reason} message={message} -> {is_success_reason(reason, message)}")
         if is_success_reason(reason, message):
             all_success.append(r)
-            await firestore_set(
-                db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"]),
-                {
-                    "message": reason or message or "成功但無訊息",
-                    "timestamp": datetime.utcnow()
-                }
-            )
-            await firestore_delete(
-                db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"])
-            )
+            logger.info(f"[Firestore] 記錄成功 ID: {pid}，寫入 success_redeems")
+            try:
+                logger.debug(f"[Firestore] 寫入前：{pid} 到 success/failed_redeems")
+                await firestore_set(
+                    db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"]),
+                    {
+                        "message": reason or message or "成功但無訊息",
+                        "timestamp": datetime.now(timezone.utc)
+                    }
+                )
+                await firestore_delete(
+                    db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"])
+                )
+            except Exception as e:
+                logger.warning(f"[Firestore] ✅ 成功寫入或刪除時發生錯誤：{pid} error={e}")
         else:
             doc = await firestore_get(db.collection("ids").document(guild_id).collection("players").document(r["player_id"]))
             name = doc.to_dict().get("name", "未知名稱") if doc.exists else "未知"
-            await firestore_set(
-                db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"]),
-                {
-                    "name": name,
-                    "reason": reason or "未知錯誤",
-                    "updated_at": datetime.utcnow()
-                }
-            )
+            logger.info(f"[Firestore] 記錄失敗 ID: {pid}，寫入 failed_redeems")
+            try:
+                logger.debug(f"[Firestore] 寫入前：{pid} 到 success/failed_redeems")
+                await firestore_set(
+                    db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"]),
+                    {
+                        "name": name,
+                        "reason": reason or "未知錯誤",
+                        "updated_at": datetime.utcnow()
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"[Firestore] ❌ 失敗寫入時發生錯誤：{pid} error={e}")
             all_fail.append(r)
-
     summary_block = build_summary_block(
         code=code,
         success=len(all_success),
@@ -1004,6 +1014,15 @@ def update_names_api():
         except Exception as e:
             logger.error(f"[UpdateNames] fetch_all 執行失敗：{e}")
             return jsonify({"success": False, "reason": str(e)}), 500
+
+        if not updated:
+            logger.info(f"[update_names_api] 所有玩家皆無變更，guild_id={guild_id}")
+            return jsonify({
+                "success": True,
+                "guild_id": guild_id,
+                "updated": [],
+                "message": "No updates needed"
+            })
 
         # ✅ Webhook
         if updated and os.getenv("ADD_ID_WEBHOOK_URL"):
