@@ -213,60 +213,66 @@ async def process_redeem(payload, fetch_semaphore=None):
             send_long_webhook(webhook_url, msg)
         return
 
-    for i in range(0, len(filtered_player_ids), MAX_BATCH_SIZE):
-        batch = filtered_player_ids[i:i + MAX_BATCH_SIZE]
-        tasks = [run_redeem_with_retry(pid, code, debug=debug) for pid in batch]
-        logger.info(f"[Redeem] 執行 batch：{batch}")
-        results = await asyncio.gather(*tasks)
-        logger.info(f"[Redeem] batch 結束：{batch} results={len(results)}")
-        await asyncio.sleep(1)
+    # ✅ 改為平行非同步兌換
+    sema = asyncio.Semaphore(DEFAULT_FETCH_LIMIT)
 
-        for r in results:
-            if isinstance(r, Exception):
-                logger.error(f"[process_all] 任務發生例外，自動包裝：{r}")
-                r = {
-                    "player_id": "Unknown",
-                    "success": False,
-                    "reason": str(r),
-                    "debug_logs": []
+    async def limited_redeem(pid):
+        async with sema:
+            return await run_redeem_with_retry(pid, code, debug=debug)
+
+    logger.info(f"[Redeem] 開始平行處理 {len(filtered_player_ids)} 位玩家")
+
+    results = await asyncio.gather(
+        *(limited_redeem(pid) for pid in filtered_player_ids),
+        return_exceptions=True
+    )
+
+    for r in results:
+        if isinstance(r, Exception):
+            logger.error(f"[process_all] 任務發生例外，自動包裝：{r}")
+            r = {
+                "player_id": "Unknown",
+                "success": False,
+                "reason": str(r),
+                "debug_logs": []
+            }
+
+        if not isinstance(r, dict):
+            logger.error(f"[process_all] 任務回傳非 dict，自動包裝：{r}")
+            r = {
+                "player_id": "Unknown",
+                "success": False,
+                "reason": str(r) if r else "None or invalid return",
+                "debug_logs": []
+            }
+
+        reason = str(r.get("reason", "") if isinstance(r, dict) else r or "")
+        message = str(r.get("message", "") if isinstance(r, dict) else "")
+
+        if is_success_reason(reason, message):
+            all_success.append(r)
+            await firestore_set(
+                db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"]),
+                {
+                    "message": reason or message or "成功但無訊息",
+                    "timestamp": datetime.utcnow()
                 }
-
-            if not isinstance(r, dict):
-                logger.error(f"[process_all] 任務回傳非 dict，自動包裝：{r}")
-                r = {
-                    "player_id": "Unknown",
-                    "success": False,
-                    "reason": str(r) if r else "None or invalid return",
-                    "debug_logs": []
+            )
+            await firestore_delete(
+                db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"])
+            )
+        else:
+            doc = await firestore_get(db.collection("ids").document(guild_id).collection("players").document(r["player_id"]))
+            name = doc.to_dict().get("name", "未知名稱") if doc.exists else "未知"
+            await firestore_set(
+                db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"]),
+                {
+                    "name": name,
+                    "reason": reason or "未知錯誤",
+                    "updated_at": datetime.utcnow()
                 }
-
-            reason = str(r.get("reason", "") if isinstance(r, dict) else r or "")
-            message = str(r.get("message", "") if isinstance(r, dict) else "")
-
-            if is_success_reason(reason, message):
-                all_success.append(r)
-                await firestore_set(
-                    db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"]),
-                    {
-                        "message": reason or message or "成功但無訊息",
-                        "timestamp": datetime.utcnow()
-                    }
-                )
-                await firestore_delete(
-                    db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"])
-                )
-            else:
-                doc = await firestore_get(db.collection("ids").document(guild_id).collection("players").document(r["player_id"]))
-                name = doc.to_dict().get("name", "未知名稱") if doc.exists else "未知"
-                await firestore_set(
-                    db.collection("failed_redeems").document(f"{guild_id}_{code}").collection("players").document(r["player_id"]),
-                    {
-                        "name": name,
-                        "reason": reason or "未知錯誤",
-                        "updated_at": datetime.utcnow()
-                    }
-                )
-                all_fail.append(r)
+            )
+            all_fail.append(r)
 
     summary_block = build_summary_block(
         code=code,
