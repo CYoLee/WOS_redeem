@@ -221,7 +221,10 @@ async def process_redeem(payload, fetch_semaphore=None):
     async def limited_redeem(pid):
         async with sema:
             result = await run_redeem_with_retry(pid, code, debug=debug)
-            return result or {"player_id": pid, "success": False, "reason": "None returned"}
+            if not result:
+                result = {}
+            result["player_id"] = pid  # ← 強制補上
+            return result
 
     logger.info(f"[Redeem] 開始平行處理 {len(filtered_player_ids)} 位玩家")
 
@@ -229,13 +232,13 @@ async def process_redeem(payload, fetch_semaphore=None):
         *(limited_redeem(pid) for pid in filtered_player_ids),
         return_exceptions=True
     )
-
     for r in results:
         logger.debug(f"[DEBUG] 任務回傳結果 r = {r}")
+
         if isinstance(r, Exception):
             logger.error(f"[process_all] 任務發生例外，自動包裝：{r}")
             r = {
-                "player_id": pid,
+                "player_id": "Unknown",
                 "success": False,
                 "reason": str(r),
                 "debug_logs": []
@@ -244,7 +247,7 @@ async def process_redeem(payload, fetch_semaphore=None):
         if not isinstance(r, dict):
             logger.error(f"[process_all] 任務回傳非 dict，自動包裝：{r}")
             r = {
-                "player_id": pid,
+                "player_id": "Unknown",
                 "success": False,
                 "reason": str(r) if r else "None or invalid return",
                 "debug_logs": []
@@ -258,6 +261,7 @@ async def process_redeem(payload, fetch_semaphore=None):
         reason = str(r.get("reason", "") if isinstance(r, dict) else r or "")
         message = str(r.get("message", "") if isinstance(r, dict) else "")
         logger.debug(f"[DEBUG] 判斷 success：pid={pid} reason={reason} message={message} -> {is_success_reason(reason, message)}")
+
         if is_success_reason(reason, message):
             all_success.append(r)
             logger.info(f"[Firestore] 記錄成功 ID: {pid}，寫入 success_redeems")
