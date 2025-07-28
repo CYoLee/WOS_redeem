@@ -326,8 +326,8 @@ async def process_redeem(payload, fetch_semaphore=None):
             logger.info(f"[Webhook] 兌換結束總結已發送到 ADD_ID_WEBHOOK_URL")
         except Exception as e:
             logger.warning(f"[Webhook] 發送兌換總結失敗：{e}")
-            
-async def store_redeem_result(result):
+
+async def store_redeem_result(player_id, result):
     try:
         doc_ref = firestore_client.collection("redeem_results").document(result["player_id"])
         await asyncio.get_event_loop().run_in_executor(None, lambda: doc_ref.set(result, merge=True))
