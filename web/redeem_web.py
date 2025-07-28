@@ -904,7 +904,14 @@ def redeem_submit():
         "guild_id": data.get("guild_id"),
         "retry": False
     }
+    data = request.get_json()
+    player_ids = data.get("player_ids", [])
+    redeem_code = data.get("code")
+    notify_discord = data.get("notify_discord", True)
+    notify_line = data.get("notify_line", False)
+
     logger.info(f"[redeem_submit] 收到請求：{player_ids=} {redeem_code=} notify_discord={notify_discord} notify_line={notify_line}")
+
     print("=== TEST LOG === 任務收到")
     logger.info(f"=== TEST LOG === 任務收到 {payload}")
     if not payload["guild_id"] or not payload["code"] or not isinstance(payload["player_ids"], list) or not payload["player_ids"]:
