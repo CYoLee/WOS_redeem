@@ -1002,7 +1002,7 @@ async def process_retry(payload: dict):
     guild_id = payload["guild_id"]
     debug = payload.get("debug", False)
     logger.info(f"[process_retry] 開始處理 retry，guild_id={guild_id} code={code} 人數={len(player_ids)}")
-    await process_redeem(code, player_ids, guild_id, is_debug=debug, retry_mode=True)
+    await process_redeem(code, player_ids, guild_id, retry_mode=True)
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
