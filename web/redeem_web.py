@@ -23,7 +23,6 @@ from playwright.async_api import async_playwright, TimeoutError
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
-firestore_client = firestore.client()
 #Remove preprocess_image_for_2captcha()
 #from PIL import Image
 import subprocess
@@ -330,7 +329,7 @@ async def process_redeem(payload, fetch_semaphore=None):
 
 async def store_redeem_result(player_id, result):
     try:
-        doc_ref = firestore_client.collection("success_redeems").document(str(player_id))
+        doc_ref = db.collection("success_redeems").document(str(player_id))
         await firestore_set(doc_ref, result)
         logger.info(f"[Firestore] 記錄成功 ID: {player_id}, 寫入 success_redeems")
     except Exception as e:
