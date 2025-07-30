@@ -144,7 +144,6 @@ REDEEM_RETRIES = 3
 async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphore=None):
     fetch_semaphore = fetch_semaphore or BoundedSemaphore(DEFAULT_FETCH_LIMIT)
     start_time = time.time()
-    code = payload.get("code")
     player_ids = payload.get("player_ids")
     debug = payload.get("debug", False)
     guild_id = payload.get("guild_id")
