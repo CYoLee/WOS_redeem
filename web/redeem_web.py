@@ -766,7 +766,7 @@ async def fetch_name_and_kingdom_common(pid):
         page = await context.new_page()
         name = "未知名稱"
         kingdom = None
-
+        player_id = pid
         for attempt in range(3):
             try:
                 await page.goto("https://wos-giftcode.centurygame.com/")
