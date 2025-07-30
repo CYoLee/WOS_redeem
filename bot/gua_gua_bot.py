@@ -54,6 +54,7 @@ logger.propagate = False
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 REDEEM_API_URL = os.getenv("REDEEM_API_URL")
+logger.info(f"[環境變數] REDEEM_API_URL = {REDEEM_API_URL}")
 redeem_submit_url = f"{REDEEM_API_URL}/redeem_submit"
 retry_failed_url = f"{REDEEM_API_URL}/retry_failed"
 tz = pytz.timezone("Asia/Taipei")
@@ -508,6 +509,7 @@ async def retry_failed(interaction: discord.Interaction, code: str):
             "guild_id": guild_id,
             "debug": False
         }
+        logger.info(f"[DEBUG] retry_failed 發送 API 至：{retry_failed_url}")
         await safe_send(interaction, f"🎁 重新兌換 {len(player_ids)} 個失敗的 ID 已發送到後端進行處理")
         async with aiohttp.ClientSession() as session:
             async def fire_and_forget_retry(payload):
