@@ -23,6 +23,7 @@ from playwright.async_api import async_playwright, TimeoutError
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
+firestore_client = firestore.client()
 #Remove preprocess_image_for_2captcha()
 #from PIL import Image
 import subprocess
@@ -108,7 +109,7 @@ if "private_key" in cred_json:
     cred_json["private_key"] = cred_json["private_key"].replace("\\n", "\n")
 if not firebase_admin._apps:
     firebase_admin.initialize_app(credentials.Certificate(cred_json))
-db = firestore.client()
+doc_ref = db.collection("success_redeems").document(str(player_id))
 
 # === Firestore Async Wrapper ===
 async def run_in_executor(func):
@@ -329,11 +330,11 @@ async def process_redeem(payload, fetch_semaphore=None):
 
 async def store_redeem_result(player_id, result):
     try:
-        doc_ref = firestore_client.collection("redeem_results").document(result["player_id"])
-        await asyncio.get_event_loop().run_in_executor(None, lambda: doc_ref.set(result, merge=True))
-        logger.info(f"[store] ✅ Firestore 寫入完成：{result['player_id']}")
+        doc_ref = firestore_client.collection("success_redeems").document(str(player_id))
+        await firestore_set(doc_ref, result)
+        logger.info(f"[Firestore] 記錄成功 ID: {player_id}, 寫入 success_redeems")
     except Exception as e:
-        logger.warning(f"[{result['player_id']}] ❌ 寫入 Firestore 發生錯誤：{e}")
+        logger.warning(f"[{player_id}] ❌ 寫入 Firestore 發生錯誤：{e}")
 
 async def run_redeem_with_retry(player_id, code, debug=False):
     logger.info(f"[Redeem] {player_id} 開始兌換 retries={REDEEM_RETRIES}")
@@ -801,26 +802,30 @@ async def fetch_name_and_kingdom_common(pid):
         logger.info(f"[{player_id}] Playwright 已關閉")
         return name, kingdom
 
-async def fetch_and_store_if_missing(guild_id, pid, fetch_semaphore):
-    logger.info(f"[{pid}] fetch_and_store_if_missing 呼叫進入")
-    async with fetch_semaphore:
-        ref = db.collection("ids").document(guild_id).collection("players").document(pid)
-        doc = await firestore_get(ref)
-        if doc.exists:
-            logger.info(f"[{pid}] fetch_and_store_if_missing 完成寫入或已存在 (已存在)")
-            return
-        name, kingdom = await fetch_name_and_kingdom_common(pid)
-        if is_valid_player_data(name, kingdom):
-            await firestore_set(ref, {
-                "name": name,
-                "kingdom": kingdom,
-                "updated_at": datetime.utcnow()
-            }, merge=True)
-            logger.info(f"[{pid}] fetch_and_store_if_missing 完成寫入或已存在 (新寫入)")
-        else:
-            logger.warning(f"[{pid}][Warn]名稱或王國未知，未寫入")
-    logger.info(f"[{pid}] fetch_and_store_if_missing 結束")
-    doc = await run_in_executor(ref.get)
+async def fetch_and_store_if_missing(guild_id, player_id, fetch_semaphore):
+    try:
+        logger.info(f"[{player_id}] fetch_and_store_if_missing 呼叫進入")
+
+        async with fetch_semaphore:
+            ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
+            doc = await firestore_get(ref)
+            if doc.exists:
+                logger.info(f"[{player_id}] fetch_and_store_if_missing 完成寫入或已存在 (已存在)")
+                return
+
+            name, kingdom = await fetch_name_and_kingdom_common(player_id)
+
+            if is_valid_player_data(name, kingdom):
+                await firestore_set(ref, {
+                    "name": name,
+                    "kingdom": kingdom,
+                    "updated_at": datetime.utcnow()
+                }, merge=True)
+                logger.info(f"[{player_id}] fetch_and_store_if_missing 完成寫入或已存在 (新寫入)")
+            else:
+                logger.warning(f"[{player_id}] [Warn]名稱或王國未知，未寫入")
+    except Exception as e:
+        logger.warning(f"[{player_id}] 抓取或更新失敗：{e}\n{traceback.format_exc()}")
 
 def is_valid_player_data(name: str, kingdom: str) -> bool:
     return name != "未知名稱" and kingdom != "未知"
