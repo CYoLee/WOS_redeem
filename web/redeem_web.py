@@ -141,7 +141,7 @@ def is_success_reason(reason, message=""):
 
 REDEEM_RETRIES = 3
 # === 主流程 ===
-async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphore=None, debug=False):
+async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphore=None):
     fetch_semaphore = fetch_semaphore or BoundedSemaphore(DEFAULT_FETCH_LIMIT)
     start_time = time.time()
     code = payload.get("code")
@@ -1002,7 +1002,7 @@ async def process_retry(payload: dict):
     guild_id = payload["guild_id"]
     debug = payload.get("debug", False)
     logger.info(f"[process_retry] 開始處理 retry，guild_id={guild_id} code={code} 人數={len(player_ids)}")
-    await process_redeem(code, player_ids, guild_id, retry_mode=True)
+    await process_redeem(code, player_ids, guild_id, retry=True)
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
