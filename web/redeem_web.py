@@ -141,7 +141,7 @@ def is_success_reason(reason, message=""):
 
 REDEEM_RETRIES = 3
 # === 主流程 ===
-async def process_redeem(code, player_ids, guild_id, retry_mode=False, fetch_semaphore=None, is_debug=False):
+async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphore=None, debug=False):
     fetch_semaphore = fetch_semaphore or BoundedSemaphore(DEFAULT_FETCH_LIMIT)
     start_time = time.time()
     code = payload.get("code")
@@ -996,21 +996,13 @@ def thread_runner(payload):
         logger.exception("[thread_runner] 發生錯誤")
 
 
-async def process_retry(payload):
-    code = payload.get("code")
-    player_ids = payload.get("player_ids", [])
-    guild_id = payload.get("guild_id")
+async def process_retry(payload: dict):
+    code = payload["code"]
+    player_ids = payload["player_ids"]
+    guild_id = payload["guild_id"]
     debug = payload.get("debug", False)
-
-    if not code or not player_ids or not guild_id:
-        logger.warning(f"[process_retry] 缺少必要欄位，略過處理。")
-        return
-
     logger.info(f"[process_retry] 開始處理 retry，guild_id={guild_id} code={code} 人數={len(player_ids)}")
-
-    # ✅ 呼叫你原本的主兌換流程（import 自己）
-    from redeem_web import process_redeem
-    await process_redeem(code, player_ids, guild_id, debug=debug, retry=True)
+    await process_redeem(code, player_ids, guild_id, is_debug=debug, retry_mode=True)
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
