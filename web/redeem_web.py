@@ -1010,7 +1010,7 @@ async def process_retry(payload):
 
     # ✅ 呼叫你原本的主兌換流程（import 自己）
     from redeem_web import process_redeem
-    await process_redeem(code, player_ids, guild_id, debug=debug, retry=True)
+    await process_redeem(code, player_ids, guild_id, is_debug=debug, retry_mode=True)
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
