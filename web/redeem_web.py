@@ -108,7 +108,7 @@ if "private_key" in cred_json:
     cred_json["private_key"] = cred_json["private_key"].replace("\\n", "\n")
 if not firebase_admin._apps:
     firebase_admin.initialize_app(credentials.Certificate(cred_json))
-doc_ref = db.collection("success_redeems").document(str(player_id))
+db = firestore.client()
 
 # === Firestore Async Wrapper ===
 async def run_in_executor(func):
