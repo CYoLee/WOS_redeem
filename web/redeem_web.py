@@ -976,6 +976,16 @@ def redeem_submit():
     REDEEM_THREAD_POOL.submit(lambda: asyncio.run(process_redeem(payload)))
     return jsonify({"message": "兌換任務已提交，背景處理中"}), 200
 
+@app.route("/retry_failed", methods=["POST"])
+def retry_failed():
+    try:
+        payload = request.get_json()
+        threading.Thread(target=thread_runner, args=(payload,), daemon=True).start()
+        return jsonify({"success": True, "message": "Retry request submitted"})
+    except Exception as e:
+        logger.exception("[retry_failed] 例外")
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
     try:
