@@ -141,7 +141,7 @@ def is_success_reason(reason, message=""):
 
 REDEEM_RETRIES = 3
 # === 主流程 ===
-async def process_redeem(payload, fetch_semaphore=None):
+async def process_redeem(code, player_ids, guild_id, debug=False, retry=False):
     fetch_semaphore = fetch_semaphore or BoundedSemaphore(DEFAULT_FETCH_LIMIT)
     start_time = time.time()
     code = payload.get("code")
