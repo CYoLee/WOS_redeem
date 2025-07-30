@@ -142,18 +142,19 @@ def is_success_reason(reason, message=""):
 REDEEM_RETRIES = 3
 # === 主流程 ===
 async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphore=None):
+    logger.info(f"[process_redeem] 處理中：guild_id={guild_id} code={code} player_ids數量={len(player_ids)} retry={retry}")
     fetch_semaphore = fetch_semaphore or BoundedSemaphore(DEFAULT_FETCH_LIMIT)
     start_time = time.time()
-    player_ids = payload.get("player_ids")
-    debug = payload.get("debug", False)
-    guild_id = payload.get("guild_id")
-    is_retry = payload.get("retry", False)
-    logger.info(f"[Redeem] 開始處理 guild_id={guild_id} code={code} retry={is_retry} 人數={len(player_ids)}")
+    # player_ids = payload.get("player_ids")
+    # debug = payload.get("debug", False)
+    # guild_id = payload.get("guild_id")
+    # is_retry = payload.get("retry", False)
+    logger.info(f"[Redeem] 開始處理 guild_id={guild_id} code={code} retry={retry} 人數={len(player_ids)}")
     header = "Retry 兌換完成 / Retry Redemption Complete" if is_retry else "兌換完成 / Redemption Completed"
     MAX_BATCH_SIZE = 1
     all_success = []
     all_fail = []
-    logger.info(f"[process_redeem] 收到 payload：{payload}")
+    logger.info(f"[process_redeem] 傳入參數：code={code} player_ids={player_ids} guild_id={guild_id}")
     await asyncio.gather(*(fetch_and_store_if_missing(guild_id, pid, GLOBAL_FETCH_SEMAPHORE) for pid in player_ids))
     logger.info("準備讀取 success_redeems")
     success_docs = await firestore_stream(
@@ -204,7 +205,7 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
             fail=0,
             skipped=skipped_count,
             duration=time.time() - start_time,
-            is_retry=is_retry
+            is_retry=retry
         )
         full_block = f"{summary_block}\n\n所有 ID 皆已兌換成功或已領取過，無需再處理"
         msg = f"{header}\n```text\n{textwrap.indent(full_block, '  ')}\n```"
@@ -220,7 +221,6 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
     async def limited_redeem(pid):
         async with sema:
             try:
-                result = await run_redeem_with_retry(pid, code, debug=debug)
                 result = result or {}
             except Exception as e:
                 result = {"success": False, "reason": str(e), "message": "", "debug_logs": []}
@@ -307,7 +307,7 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
         fail=len(all_fail),
         skipped=skipped_count,
         duration=time.time() - start_time,
-        is_retry=is_retry
+        is_retry=retry
     )
     logger.info(f"[Redeem] 完成處理 guild_id={guild_id} code={code} 成功={len(all_success)} 失敗={len(all_fail)} 跳過={skipped_count}")
     failures_block = await format_failures_block(guild_id, all_fail)
