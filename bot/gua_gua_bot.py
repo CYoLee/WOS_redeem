@@ -517,6 +517,7 @@ async def retry_failed(interaction: discord.Interaction, code: str):
                             pass
                     except Exception as e:
                         logger.warning(f"[fire_and_forget_retry] 發送失敗：{e}")
+            await fire_and_forget_retry(payload)
 
     except Exception as e:
         logger.exception(f"[retry_failed] 發送 API 時出錯")
