@@ -148,7 +148,7 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
     # player_ids = payload.get("player_ids")
     # debug = payload.get("debug", False)
     # guild_id = payload.get("guild_id")
-    # is_retry = payload.get("retry", False)
+    is_retry = retry
     logger.info(f"[Redeem] 開始處理 guild_id={guild_id} code={code} retry={retry} 人數={len(player_ids)}")
     header = "Retry 兌換完成 / Retry Redemption Complete" if is_retry else "兌換完成 / Redemption Completed"
     MAX_BATCH_SIZE = 1
@@ -193,10 +193,6 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
     skipped_count = len(player_ids) - len(filtered_player_ids)
     logger.info(f"[Redeem] filtered_player_ids：{len(filtered_player_ids)} 人，skipped_count={skipped_count}")
 
-    if debug:
-        for pid in filtered_player_ids:
-            assert pid not in already_redeemed_ids, f"過濾失敗：{pid} 應已在 success_redeems 中"
-
     if not filtered_player_ids:
         logger.info(f"[Redeem] filtered_player_ids 為空，觸發 webhook 發送並結束 guild_id={guild_id} code={code}")
         summary_block = build_summary_block(
@@ -221,10 +217,10 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
     async def limited_redeem(pid):
         async with sema:
             try:
+                result = await run_redeem_with_retry(pid, code, debug=False)  # ⚠️ debug 可視情況改成變數
                 result = result or {}
             except Exception as e:
                 result = {"success": False, "reason": str(e), "message": "", "debug_logs": []}
-            # 強制補齊必要欄位
             result["player_id"] = pid
             result["success"] = result.get("success", False)
             result["reason"] = result.get("reason", "")
