@@ -1092,16 +1092,23 @@ def update_names_api():
         logger.error(f"[UpdateNames] 發生嚴重錯誤：{e}")
         return jsonify({"success": False, "reason": str(e)}), 500
 
-@app.route("/retry_failed", methods=["POST"])
 def retry_failed():
     data = request.json
     code = data.get("code")
-    debug = data.get("debug", False)
     guild_id = data.get("guild_id")
-    if not guild_id:
-        return jsonify({"success": False, "reason": "缺少 guild_id"}), 400
-    if not code:
-        return jsonify({"success": False, "reason": "缺少 code"}), 400
+    debug = data.get("debug", False)
+    player_ids = data.get("player_ids", [])
+
+    if not code or not guild_id:
+        return jsonify({"success": False, "reason": "缺少參數"}), 400
+
+    payload = {
+        "code": code,
+        "player_ids": player_ids,
+        "debug": debug,
+        "guild_id": guild_id,
+        "retry": True
+    }
 
     def thread_runner(payload):
         try:
@@ -1110,31 +1117,7 @@ def retry_failed():
             logger.exception(f"[Thread] /retry_failed 執行時發生例外：{e}")
 
     threading.Thread(target=thread_runner, args=(payload,), daemon=True).start()
-    REDEEM_THREAD_POOL.submit(lambda: asyncio.run(process_redeem(payload)))
-    return jsonify({"success": True, "message": f"已針對 {len(player_ids)} 筆失敗紀錄重新兌換"}), 200
-
-    player_ids = [doc.id for doc in failed_docs]
-
-    if not player_ids:
-        return jsonify({"success": False, "reason": f"找不到 failed_redeems 清單：{code} / Cannot find failed_redeems list for code: {code}"}), 404
-
-    logger.info(f"[{guild_id}] 🔁 Retry {len(player_ids)} failed ID(s) for giftcode {code}")
-
-    try:
-        payload = {
-            "code": code,
-            "player_ids": player_ids,
-            "debug": debug,
-            "guild_id": guild_id,
-            "retry": True,
-        }
-        try:
-            loop.run_until_complete(process_redeem(payload))
-        except Exception as e:
-            logger.exception(f"[Thread] /retry_failed 執行時發生例外：{e}")
-        return jsonify({"success": True, "message": f"已針對 {len(player_ids)} 筆失敗紀錄重新兌換"}), 200
-    except Exception as e:
-        return jsonify({"success": False, "reason": str(e)}), 500
+    return jsonify({"success": True, "message": "Retry request submitted"}), 200
 
 @app.route("/line_quota", methods=["GET"])
 def line_quota():
