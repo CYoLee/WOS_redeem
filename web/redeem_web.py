@@ -980,11 +980,37 @@ def redeem_submit():
 def retry_failed():
     try:
         payload = request.get_json()
+        logger.info(f"[retry_failed] 接收到 retry 請求：{payload}")
         threading.Thread(target=thread_runner, args=(payload,), daemon=True).start()
         return jsonify({"success": True, "message": "Retry request submitted"})
     except Exception as e:
-        logger.exception("[retry_failed] 例外")
+        logger.exception("[retry_failed] 發生例外")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+def thread_runner(payload):
+    try:
+        logger.info(f"[thread_runner] 啟動 retry 線程，payload：{payload}")
+        asyncio.run(process_retry(payload))
+    except Exception as e:
+        logger.exception("[thread_runner] 發生錯誤")
+
+
+async def process_retry(payload):
+    code = payload.get("code")
+    player_ids = payload.get("player_ids", [])
+    guild_id = payload.get("guild_id")
+    debug = payload.get("debug", False)
+
+    if not code or not player_ids or not guild_id:
+        logger.warning(f"[process_retry] 缺少必要欄位，略過處理。")
+        return
+
+    logger.info(f"[process_retry] 開始處理 retry，guild_id={guild_id} code={code} 人數={len(player_ids)}")
+
+    # ✅ 呼叫你原本的主兌換流程（import 自己）
+    from redeem_web import process_redeem
+    await process_redeem(code, player_ids, guild_id, debug=debug, retry=True)
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
@@ -1465,8 +1491,12 @@ def send_to_line_group(message):
     except Exception as e:
         logger.warning(f"[LINE] ❌ 推播發生例外：{e}")
 
-def thread_runner(coro):
-    asyncio.run(coro)
+def thread_runner(payload):
+    try:
+        logger.info(f"[retry_failed] 後台開始處理 retry 任務 payload：{payload}")
+        asyncio.run(process_retry(payload))  # ✅ 這裡確保是 async coroutine
+    except Exception as e:
+        logger.exception("[thread_runner] 執行 retry 發生錯誤")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
