@@ -221,7 +221,7 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
     async def limited_redeem(pid):
         async with sema:
             try:
-                result = await run_redeem_with_retry(pid, code)
+                result = await run_redeem_with_retry(pid, code, guild_id)
             except Exception as e:
                 result = {"success": False, "reason": str(e), "message": "", "debug_logs": []}
             # 強制補齊必要欄位
@@ -334,7 +334,7 @@ async def store_redeem_result(player_id, result, guild_id, code):
     except Exception as e:
         logger.warning(f"[Firestore] 寫入失敗 ID: {player_id}, error={e}")
 
-async def run_redeem_with_retry(player_id, code, debug=False):
+async def run_redeem_with_retry(player_id, code, guild_id, debug=False):
     logger.info(f"[Redeem] {player_id} 開始兌換 retries={REDEEM_RETRIES}")
     logger.info(f"[Redeem] {player_id} run_redeem_with_retry 呼叫進入")
     debug_logs = []
