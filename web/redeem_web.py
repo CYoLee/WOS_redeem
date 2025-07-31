@@ -217,11 +217,10 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
     async def limited_redeem(pid):
         async with sema:
             try:
-                result = await run_redeem_with_retry(pid, code, debug=False)  # ⚠️ debug 可視情況改成變數
                 result = await run_redeem_with_retry(pid, code)
-                result = result or {}
             except Exception as e:
                 result = {"success": False, "reason": str(e), "message": "", "debug_logs": []}
+            # 強制補齊必要欄位
             result["player_id"] = pid
             result["success"] = result.get("success", False)
             result["reason"] = result.get("reason", "")
@@ -985,20 +984,16 @@ def retry_failed():
 
 def thread_runner(payload):
     try:
-        logger.info(f"[thread_runner] 收到任務 payload：{payload}")
-        if payload.get("retry"):
-            logger.info("[thread_runner] 處理 retry 任務")
-            asyncio.run(process_retry(payload))  # 內部會再呼叫 process_redeem
+        is_retry = payload.get("retry", False)
+        if is_retry:
+            asyncio.run(process_retry(payload))
         else:
-            logger.info("[thread_runner] 處理一般兌換任務")
-            asyncio.run(process_redeem(
-                code=payload["code"],
-                player_ids=payload["player_ids"],
-                guild_id=payload["guild_id"],
-                retry=False
-            ))
+            code = payload.get("code")
+            player_ids = payload.get("player_ids", [])
+            guild_id = payload.get("guild_id")
+            asyncio.run(process_redeem(code, player_ids, guild_id, retry=False))
     except Exception as e:
-        logger.error(f"[thread_runner] 執行任務發生錯誤：{e}\n{traceback.format_exc()}")
+        logger.error(f"[thread_runner] 執行 {('retry' if is_retry else 'redeem')} 發生錯誤\n{traceback.format_exc()}")
 
 async def process_retry(payload: dict):
     code = payload["code"]
