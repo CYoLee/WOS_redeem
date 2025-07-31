@@ -77,6 +77,10 @@ def suppress_stdout():
         finally:
             sys.stdout = old_stdout
 
+def log_and_run(coro):
+    logger.info("[Thread] 開始執行 asyncio.run 任務")
+    asyncio.run(coro)
+
 def get_webhook_url_by_guild(guild_id: str) -> str:
     key = f"WEBHOOK_{guild_id}"
     return os.getenv(key)
@@ -145,9 +149,9 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
     logger.info(f"[process_redeem] 處理中：guild_id={guild_id} code={code} player_ids數量={len(player_ids)} retry={retry}")
     fetch_semaphore = fetch_semaphore or BoundedSemaphore(DEFAULT_FETCH_LIMIT)
     start_time = time.time()
-    # player_ids = payload.get("player_ids")
-    # debug = payload.get("debug", False)
-    # guild_id = payload.get("guild_id")
+    if not code or not player_ids or not guild_id:
+        logger.error("[process_redeem] 缺少必要參數，無法執行兌換")
+        return
     is_retry = retry
     logger.info(f"[Redeem] 開始處理 guild_id={guild_id} code={code} retry={retry} 人數={len(player_ids)}")
     header = "Retry 兌換完成 / Retry Redemption Complete" if is_retry else "兌換完成 / Redemption Completed"
@@ -968,7 +972,14 @@ def redeem_submit():
         return jsonify({"success": False, "reason": "缺少必要參數"}), 400
     logger.info(f"[API] /redeem_submit 收到請求：{data}")
     logger.info(f"[ThreadPool] 提交 redeem 任務，payload 玩家數={len(payload['player_ids'])}")
-    REDEEM_THREAD_POOL.submit(lambda: asyncio.run(process_redeem(payload)))
+    REDEEM_THREAD_POOL.submit(lambda: log_and_run(
+        process_redeem(
+            payload.get("code"),
+            payload.get("player_ids"),
+            payload.get("guild_id"),
+            retry=payload.get("retry", False)
+        )
+    ))
     return jsonify({"message": "兌換任務已提交，背景處理中"}), 200
 
 @app.route("/retry_failed", methods=["POST"])
