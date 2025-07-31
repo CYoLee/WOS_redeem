@@ -326,13 +326,13 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
         except Exception as e:
             logger.warning(f"[Webhook] 發送兌換總結失敗：{e}")
 
-async def store_redeem_result(player_id, result):
+async def store_redeem_result(player_id, result, guild_id, code):
     try:
-        doc_ref = db.collection("success_redeems").document(str(player_id))
+        doc_ref = db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players").document(player_id)
         await firestore_set(doc_ref, result)
         logger.info(f"[Firestore] 記錄成功 ID: {player_id}, 寫入 success_redeems")
     except Exception as e:
-        logger.warning(f"[{player_id}] ❌ 寫入 Firestore 發生錯誤：{e}")
+        logger.warning(f"[Firestore] 寫入失敗 ID: {player_id}, error={e}")
 
 async def run_redeem_with_retry(player_id, code, debug=False):
     logger.info(f"[Redeem] {player_id} 開始兌換 retries={REDEEM_RETRIES}")
@@ -387,7 +387,7 @@ async def run_redeem_with_retry(player_id, code, debug=False):
 
     # ✅ 最終 Firestore 寫入（不論成功與否）
     try:
-        await store_redeem_result(player_id, result)
+        await store_redeem_result(player_id, result, guild_id, code)
     except Exception as e:
         logger.warning(f"[{player_id}] ❌ 寫入 Firestore 發生錯誤：{e}")
 
