@@ -355,15 +355,15 @@ async def run_redeem_with_retry(player_id, code, guild_id, debug=False):
         except asyncio.TimeoutError:
             logger.error(f"[{player_id}] 第 {redeem_retry + 1} 次：超過 90 秒 timeout")
             result = {
+                "player_id": player_id,
                 "success": False,
                 "reason": "Timeout：單人兌換超過 90 秒",
-                "player_id": player_id,
                 "debug_logs": debug_logs
             }
             break
 
         if result is None:
-            logger.warning(f"[{player_id}] ❌ _redeem_once 最後仍為 None，自動補上錯誤格式")
+            logger.warning(f"[{player_id}] ❌ _redeem_once 最終仍為 None，自動補上錯誤格式")
             result = {
                 "player_id": player_id,
                 "success": False,
@@ -371,17 +371,22 @@ async def run_redeem_with_retry(player_id, code, guild_id, debug=False):
                 "debug_logs": debug_logs
             }
 
+        # 確保 reason 至少有預設值
         result["reason"] = result.get("reason") or "未知錯誤"
 
+        # 如果是暫時性嘗試標記，重試
         if result["reason"].startswith("_try"):
             continue
 
+        # 成功條件：直接回傳
         if is_success_reason(result.get("reason", ""), result.get("message", "")):
-            break  # 成功，跳出 retry
+            return result
 
+        # 登入錯誤也是不重試
         if "登入失敗" in (result.get("reason") or "") or "請先登入" in (result.get("reason") or ""):
-            break
+            return result
 
+        # 可重試錯誤才等候後繼續
         if any(k in (result.get("reason") or "") for k in RETRY_KEYWORDS):
             debug_logs.append({
                 "retry": redeem_retry + 1,
@@ -389,7 +394,11 @@ async def run_redeem_with_retry(player_id, code, guild_id, debug=False):
             })
             await asyncio.sleep(2 + redeem_retry)
         else:
-            break
+            # 其他錯誤直接回傳
+            return result
+
+    # 所有重試結束後，回傳最後一次的結果
+    return result
 
 async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
     logger.info(f"[{player_id}] _redeem_once() 進入，開始兌換流程")
