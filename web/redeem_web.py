@@ -218,6 +218,7 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
         async with sema:
             try:
                 result = await run_redeem_with_retry(pid, code, debug=False)  # ⚠️ debug 可視情況改成變數
+                result = await run_redeem_with_retry(pid, code)
                 result = result or {}
             except Exception as e:
                 result = {"success": False, "reason": str(e), "message": "", "debug_logs": []}
@@ -982,14 +983,22 @@ def retry_failed():
         logger.exception("[retry_failed] 發生例外")
         return jsonify({"success": False, "error": str(e)}), 500
 
-
 def thread_runner(payload):
     try:
-        logger.info(f"[thread_runner] 啟動 retry 線程，payload：{payload}")
-        asyncio.run(process_retry(payload))
+        logger.info(f"[thread_runner] 收到任務 payload：{payload}")
+        if payload.get("retry"):
+            logger.info("[thread_runner] 處理 retry 任務")
+            asyncio.run(process_retry(payload))  # 內部會再呼叫 process_redeem
+        else:
+            logger.info("[thread_runner] 處理一般兌換任務")
+            asyncio.run(process_redeem(
+                code=payload["code"],
+                player_ids=payload["player_ids"],
+                guild_id=payload["guild_id"],
+                retry=False
+            ))
     except Exception as e:
-        logger.exception("[thread_runner] 發生錯誤")
-
+        logger.error(f"[thread_runner] 執行任務發生錯誤：{e}\n{traceback.format_exc()}")
 
 async def process_retry(payload: dict):
     code = payload["code"]
