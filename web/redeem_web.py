@@ -224,12 +224,25 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
             try:
                 result = await run_redeem_with_retry(pid, code, guild_id)
             except Exception as e:
-                result = {"success": False, "reason": str(e), "message": "", "debug_logs": []}
-            # 強制補齊必要欄位
-            result["player_id"] = pid
-            result["success"] = result.get("success", False)
-            result["reason"] = result.get("reason", "")
-            result["message"] = result.get("message", "")
+                logger.error(f"[{pid}] ❌ limited_redeem 捕捉到例外：{e}")
+                result = None
+
+            if result is None or not isinstance(result, dict):
+                logger.warning(f"[{pid}] ❌ limited_redeem 收到 None 或非 dict，強制包裝")
+                result = {
+                    "player_id": pid,
+                    "success": False,
+                    "reason": str(result) if result else "NoneType error",
+                    "debug_logs": []
+                }
+
+            # 補強欄位，防止缺欄造成 Firestore 寫入失敗
+            result.setdefault("player_id", pid)
+            result.setdefault("success", False)
+            result.setdefault("reason", "")
+            result.setdefault("message", "")
+            result.setdefault("debug_logs", [])
+
             return result
 
     logger.info(f"[Redeem] 開始平行處理 {len(filtered_player_ids)} 位玩家")
@@ -349,12 +362,12 @@ async def run_redeem_with_retry(player_id, code, guild_id, debug=False):
             }
             break
 
-        if result is None or not isinstance(result, dict):
-            logger.error(f"[{player_id}] 第 {redeem_retry + 1} 次：_redeem_once 回傳 None 或格式錯誤 → {result}")
+        if result is None:
+            logger.warning(f"[{player_id}] ❌ _redeem_once 最後仍為 None，自動補上錯誤格式")
             result = {
                 "player_id": player_id,
                 "success": False,
-                "reason": str(result) if result else "無效回傳（None 或錯誤格式）",
+                "reason": "NoneType return from _redeem_once",
                 "debug_logs": debug_logs
             }
 
