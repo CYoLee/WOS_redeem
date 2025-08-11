@@ -64,9 +64,18 @@ LANG_CHOICES = [
 ]
 
 # === Firebase Init ===
-cred_env = os.getenv("FIREBASE_CREDENTIALS") or ""
-cred_dict = json.loads(base64.b64decode(cred_env).decode("utf-8")) if not cred_env.startswith("{") else json.loads(cred_env)
-cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+def load_firebase_credentials():
+    raw = os.getenv("FIREBASE_CREDENTIALS", "")
+    if not raw:
+        raise RuntimeError("FIREBASE_CREDENTIALS 未設定")
+    try:
+        data = json.loads(raw) if raw.strip().startswith("{") else json.loads(base64.b64decode(raw).decode("utf-8"))
+    except Exception as e:
+        raise RuntimeError(f"FIREBASE_CREDENTIALS 解析失敗: {e}")
+    if "private_key" in data:
+        data["private_key"] = data["private_key"].replace("\\n", "\n")
+    return data
+cred_dict = load_firebase_credentials()
 cred = credentials.Certificate(cred_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
@@ -180,8 +189,8 @@ async def add_id(interaction: discord.Interaction, player_ids: str):
                 invalid_ids.append(pid)
 
         if invalid_ids:
-            msg = f"⚠️ 無效 ID（非 9 位數字） / Invalid ID(s) (not 9 digits):`{', '.join(invalid_ids)}`"
-            await safe_send(interaction, "\n".join(msg))
+            msg = f"⚠️ 無效 ID（非 9 位數字） / Invalid ID(s) (not 9 digits): `{', '.join(invalid_ids)}`"
+            await safe_send(interaction, msg)
             return
 
         success = []
@@ -209,9 +218,11 @@ async def add_id(interaction: discord.Interaction, player_ids: str):
             msg.append(f"✅ 已新增 / Added：`{', '.join(success)}`")
         if exists:
             msg.append(f"⚠️ 已存在 / Already exists：`{', '.join(exists)}`")
+        if error_ids:
+            msg.append(f"❗新增失敗 / Failed：`{', '.join(error_ids)}`")
         if not msg:
             msg = ["⚠️ 沒有有效的 ID 輸入 / No valid ID input"]
-        
+
         await safe_send(interaction, "\n".join(msg))
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
@@ -247,6 +258,7 @@ async def remove_id(interaction: discord.Interaction, player_id: str):
         await safe_send(interaction, f"❌ 錯誤：{e}")
 
 @tree.command(name="list_ids", description="列出所有玩家 ID / List all player IDs")
+@interaction_guard
 async def list_ids(interaction: discord.Interaction):
     try:
         await interaction.response.defer(thinking=True, ephemeral=True)
@@ -257,7 +269,7 @@ async def list_ids(interaction: discord.Interaction):
 
         players = result.get("players", [])
         if not players:
-            await interaction.response.send_message("📭 沒有任何 ID / No player ID found", ephemeral=True)
+            await interaction.followup.send("📭 沒有任何 ID / No player ID found", ephemeral=True)
             return
 
         PAGE_SIZE = 20
@@ -507,19 +519,19 @@ async def retry_failed(interaction: discord.Interaction, code: str):
             "code": code,
             "player_ids": player_ids,
             "guild_id": guild_id,
-            "debug": False
+            "debug": False,
+            "retry": True,
         }
         logger.info(f"[DEBUG] retry_failed 發送 API 至：{retry_failed_url}")
         await safe_send(interaction, f"🎁 重新兌換 {len(player_ids)} 個失敗的 ID 已發送到後端進行處理")
-        async with aiohttp.ClientSession() as session:
-            async def fire_and_forget_retry(payload):
+        async def fire_and_forget_retry(payload):
+            try:
                 async with aiohttp.ClientSession() as session:
-                    try:
-                        async with session.post(retry_failed_url, json=payload):
-                            pass
-                    except Exception as e:
-                        logger.warning(f"[fire_and_forget_retry] 發送失敗：{e}")
-            await fire_and_forget_retry(payload)
+                    await session.post(retry_failed_url, json=payload, timeout=10)
+            except Exception as e:
+                logger.warning(f"[fire_and_forget_retry] 發送失敗：{e}")
+
+        await fire_and_forget_retry(payload)
 
     except Exception as e:
         logger.exception(f"[retry_failed] 發送 API 時出錯")

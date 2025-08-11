@@ -17,29 +17,26 @@ import threading
 import textwrap
 from textwrap import indent
 #Remove preprocess_image_for_2captcha()
-#from io import BytesIO
+from io import BytesIO
 from flask import Flask, request, jsonify
 from playwright.async_api import async_playwright, TimeoutError
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
 #Remove preprocess_image_for_2captcha()
-#from PIL import Image
+from PIL import Image
 import subprocess
 import nest_asyncio
 import functools
-from datetime import datetime
-from pytz import timezone
-from datetime import datetime, timedelta
-tz = timezone("Asia/Taipei")
-from datetime import timezone
+import pytz
+from datetime import datetime, timedelta, timezone
+tz = pytz.timezone("Asia/Taipei")
 from googletrans import Translator
 translator = Translator()
-from asyncio import BoundedSemaphore
 from concurrent.futures import ThreadPoolExecutor
 REDEEM_THREAD_POOL = ThreadPoolExecutor(max_workers=4)
-GLOBAL_FETCH_SEMAPHORE = BoundedSemaphore(4)
 DEFAULT_FETCH_LIMIT = 4
+# 說明：改為在事件迴圈內建立 asyncio.Semaphore，不再用全域 BoundedSemaphore
 
 
 logging.basicConfig(
@@ -90,7 +87,7 @@ def send_long_webhook(webhook_url, content):
     chunks = [content[i:i + max_length] for i in range(0, len(content), max_length)]
     for chunk in chunks:
         try:
-            resp = requests.post(webhook_url, json={"content": chunk})
+            resp = requests.post(webhook_url, json={"content": chunk}, timeout=10)
             if resp.status_code >= 400:
                 logger.warning(f"[Webhook] 發送失敗：{resp.status_code} {resp.text}")
             else:
@@ -147,7 +144,8 @@ REDEEM_RETRIES = 3
 # === 主流程 ===
 async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphore=None):
     logger.info(f"[process_redeem] 處理中：guild_id={guild_id} code={code} player_ids數量={len(player_ids)} retry={retry}")
-    fetch_semaphore = fetch_semaphore or BoundedSemaphore(DEFAULT_FETCH_LIMIT)
+    # 在目前事件迴圈內建立 semaphore，避免「is bound to a different event loop」
+    fetch_semaphore = fetch_semaphore or asyncio.Semaphore(DEFAULT_FETCH_LIMIT)
     start_time = time.time()
     if not code or not player_ids or not guild_id:
         logger.error("[process_redeem] 缺少必要參數，無法執行兌換")
@@ -159,7 +157,7 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
     all_success = []
     all_fail = []
     logger.info(f"[process_redeem] 傳入參數：code={code} player_ids={player_ids} guild_id={guild_id}")
-    await asyncio.gather(*(fetch_and_store_if_missing(guild_id, pid, GLOBAL_FETCH_SEMAPHORE) for pid in player_ids))
+    await asyncio.gather(*(fetch_and_store_if_missing(guild_id, pid, fetch_semaphore) for pid in player_ids))
     logger.info("準備讀取 success_redeems")
     success_docs = await firestore_stream(
         db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players")
@@ -309,7 +307,7 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
                     {
                         "name": name,
                         "reason": reason or "未知錯誤",
-                        "updated_at": datetime.utcnow()
+                        "updated_at": datetime.now(timezone.utc)
                     }
                 )
             except Exception as e:
@@ -328,17 +326,16 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
     full_block = f"{summary_block}\n\n{failures_block.strip() or '無錯誤資料 / No error data'}"
     webhook_message = f"{header}\n```text\n{textwrap.indent(full_block, '  ')}\n```"
 
-    webhook_url = os.getenv("ADD_ID_WEBHOOK_URL")
+    # 優先使用 guild 專屬 webhook，其次使用全域
+    webhook_url = get_webhook_url_by_guild(guild_id) or os.getenv("ADD_ID_WEBHOOK_URL")
     if webhook_url:
         try:
-            final_summary = f"{header}\n```text\n{textwrap.indent(full_block, '  ')}\n```"
             for i in range(0, len(full_block), 1800):
                 content = f"{header}\n```text\n{full_block[i:i+1800]}\n```"
                 requests.post(webhook_url, json={"content": content}, timeout=10)
-            requests.post(webhook_url, json={"content": final_summary}, timeout=10)
-            logger.info(f"[Webhook] 兌換結束總結已發送到 ADD_ID_WEBHOOK_URL")
+            logger.info(f"[Webhook] 兌換結束總結已發送")
         except Exception as e:
-            logger.warning(f"[Webhook] 發送兌換總結失敗：{e}")
+            logger.warning(f"[Webhook] 發送兌換結束總結失敗：{e}")
 
 async def run_redeem_with_retry(player_id, code, guild_id, debug=False):
     logger.info(f"[Redeem] {player_id} 開始兌換 retries={REDEEM_RETRIES}")
@@ -411,7 +408,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, args=["--disable-gpu"])
+            browser = await p.chromium.launch(headless=True, args=["--disable-gpu","--no-sandbox","--disable-dev-shm-usage"])
             context = await browser.new_context(locale="zh-TW")
             page = await context.new_page()
             await page.goto("https://wos-giftcode.centurygame.com/", timeout=PAGE_LOAD_TIMEOUT)
@@ -621,6 +618,9 @@ logger.info(f"CAPTCHA_API_KEY 設定檢查: {bool(CAPTCHA_API_KEY)}")
 
 async def solve_with_2captcha(b64_img):
     api_key = os.getenv("CAPTCHA_API_KEY")
+    if not api_key:
+        logger.warning("[2Captcha] CAPTCHA_API_KEY 未設定，跳過遠端解碼")
+        return None
     payload = {
         "key": api_key,
         "method": "base64",
@@ -772,7 +772,7 @@ async def _package_result(page, success, message, player_id, debug_logs, debug=F
 async def fetch_name_and_kingdom_common(pid):
     logger.info(f"[{pid}] Playwright 啟動準備")
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=True, args=["--disable-gpu","--no-sandbox","--disable-dev-shm-usage"])
         context = await browser.new_context(locale="zh-TW")
         page = await context.new_page()
         name = "未知名稱"
@@ -824,7 +824,7 @@ async def fetch_and_store_if_missing(guild_id, player_id, fetch_semaphore):
                 await firestore_set(ref, {
                     "name": name,
                     "kingdom": kingdom,
-                    "updated_at": datetime.utcnow()
+                    "updated_at": datetime.now(timezone.utc)
                 }, merge=True)
                 logger.info(f"[{player_id}] fetch_and_store_if_missing 完成寫入或已存在 (新寫入)")
             else:
@@ -833,7 +833,7 @@ async def fetch_and_store_if_missing(guild_id, player_id, fetch_semaphore):
         logger.warning(f"[{player_id}] 抓取或更新失敗：{e}\n{traceback.format_exc()}")
 
 def is_valid_player_data(name: str, kingdom: str) -> bool:
-    return name != "未知名稱" and kingdom != "未知"
+    return bool(name and kingdom) and name != "未知名稱" and kingdom != "未知" and str(kingdom).isdigit()
 
 async def format_failures_block(guild_id, all_fail):
     lines = []
@@ -853,11 +853,12 @@ async def format_failures_block(guild_id, all_fail):
 def favicon():
     return "", 204
 
-@app.route("/run_notify", methods=["POST"])
 def run_notify():
     try:
         secret = os.getenv("INTERNAL_SECRET")
-        url = "https://wosredeem-production-2f18.up.railway.app/internal_push_notify"
+        url = os.getenv("BOT_INTERNAL_NOTIFY_URL")
+        if not url:
+            return "❌ BOT_INTERNAL_NOTIFY_URL 未設定", 500
         resp = requests.post(url, json={"secret": secret}, timeout=10)
         return f"✅ 結果：{resp.text}", 200
     except Exception as e:
@@ -900,7 +901,7 @@ def add_id():
             loop.run_until_complete(firestore_set(ref, {
                 "name": player_name,
                 "kingdom": kingdom,
-                "updated_at": datetime.utcnow()
+                "updated_at": datetime.now(timezone.utc)
             }, merge=True))
 
         webhook_url = os.getenv("ADD_ID_WEBHOOK_URL")
@@ -956,43 +957,38 @@ def list_ids():
 
 @app.route("/redeem_submit", methods=["POST"])
 def redeem_submit():
-    
-    data = request.json
+    data = request.get_json() or {}
     payload = {
         "code": data.get("code"),
-        "player_ids": data.get("player_ids"),
-        "debug": data.get("debug", False),
+        "player_ids": data.get("player_ids") or [],
         "guild_id": data.get("guild_id"),
+        "debug": bool(data.get("debug", False)),
         "retry": False
     }
-    data = request.get_json()
-    player_ids = data.get("player_ids", [])
-    redeem_code = data.get("code")
-    notify_discord = data.get("notify_discord", True)
-    notify_line = data.get("notify_line", False)
 
-    logger.info(f"[redeem_submit] 收到請求：{player_ids=} {redeem_code=} notify_discord={notify_discord} notify_line={notify_line}")
-
-    print("=== TEST LOG === 任務收到")
-    logger.info(f"=== TEST LOG === 任務收到 {payload}")
-    if not payload["guild_id"] or not payload["code"] or not isinstance(payload["player_ids"], list) or not payload["player_ids"]:
+    # 參數檢查
+    if not payload["guild_id"] or not payload["code"] or not payload["player_ids"]:
         return jsonify({"success": False, "reason": "缺少必要參數"}), 400
-    logger.info(f"[API] /redeem_submit 收到請求：{data}")
-    logger.info(f"[ThreadPool] 提交 redeem 任務，payload 玩家數={len(payload['player_ids'])}")
+
+    logger.info(f"[API] /redeem_submit 收到請求：guild={payload['guild_id']} code={payload['code']} players={len(payload['player_ids'])}")
+    logger.info(f"[ThreadPool] 提交 redeem 任務")
+
     REDEEM_THREAD_POOL.submit(lambda: log_and_run(
         process_redeem(
-            payload.get("code"),
-            payload.get("player_ids"),
-            payload.get("guild_id"),
-            retry=payload.get("retry", False)
+            payload["code"],
+            payload["player_ids"],
+            payload["guild_id"],
+            retry=False
         )
     ))
     return jsonify({"message": "兌換任務已提交，背景處理中"}), 200
 
+# redeem_web.py
 @app.route("/retry_failed", methods=["POST"])
 def retry_failed():
     try:
-        payload = request.get_json()
+        payload = request.get_json() or {}
+        payload["retry"] = True  # 確保一定為重試
         logger.info(f"[retry_failed] 接收到 retry 請求：{payload}")
         threading.Thread(target=thread_runner, args=(payload,), daemon=True).start()
         return jsonify({"success": True, "message": "Retry request submitted"})
@@ -1002,16 +998,10 @@ def retry_failed():
 
 def thread_runner(payload):
     try:
-        is_retry = payload.get("retry", False)
-        if is_retry:
-            asyncio.run(process_retry(payload))
-        else:
-            code = payload.get("code")
-            player_ids = payload.get("player_ids", [])
-            guild_id = payload.get("guild_id")
-            asyncio.run(process_redeem(code, player_ids, guild_id, retry=False))
+        # 直接走 retry
+        asyncio.run(process_retry(payload))
     except Exception as e:
-        logger.error(f"[thread_runner] 執行 {('retry' if is_retry else 'redeem')} 發生錯誤\n{traceback.format_exc()}")
+        logger.error(f"[thread_runner] 執行 retry 發生錯誤\n{traceback.format_exc()}")
 
 async def process_retry(payload: dict):
     code = payload["code"]
@@ -1045,48 +1035,37 @@ def update_names_api():
         updated = []
 
         async def fetch_all():
-            try:
-                async with async_playwright() as p:
-                    browser = await p.chromium.launch(headless=True)
-                    context = await browser.new_context(locale="zh-TW")
-                    page = await context.new_page()
+            for pid in player_ids:
+                try:
+                    name, kingdom = await fetch_name_and_kingdom_common(pid)
 
-                    for pid in player_ids:
-                        try:
-                            name, kingdom = await fetch_name_and_kingdom_common(pid)
+                    doc_ref = db.collection("ids").document(guild_id).collection("players").document(pid)
+                    existing_doc = await firestore_get(doc_ref)
+                    doc_data = existing_doc.to_dict() if existing_doc.exists else {}
+                    existing_name = doc_data.get("name")
+                    existing_kingdom = doc_data.get("kingdom")
 
-                            doc_ref = db.collection("ids").document(guild_id).collection("players").document(pid)
-                            existing_doc = await firestore_get(doc_ref)
-                            doc_data = existing_doc.to_dict() if existing_doc.exists else {}
-                            existing_name = doc_data.get("name")
-                            existing_kingdom = doc_data.get("kingdom")
+                    if name == "未知名稱" or not kingdom or kingdom == "未知":
+                        logger.warning(f"[{pid}][Warn]名稱或王國為未知，跳過更新")
+                        continue
 
-                            if name == "未知名稱" or not kingdom or kingdom == "未知":
-                                logger.warning(f"[{pid}][Warn]名稱或王國為未知，跳過更新")
-                                continue
-
-                            if existing_name != name or existing_kingdom != kingdom:
-                                updated.append({
-                                    "id": pid,
-                                    "old_name": existing_name or "未知",
-                                    "new_name": name,
-                                    "old_kingdom": existing_kingdom or "未知",
-                                    "new_kingdom": kingdom
-                                })
-                                await firestore_set(doc_ref, {
-                                    "name": name,
-                                    "kingdom": kingdom,
-                                    "updated_at": datetime.utcnow()
-                                }, merge=True)
-                            else:
-                                logger.info(f"[{pid}] 無變更，保留原資料")
-                        except Exception as e:
-                            logger.error(f"[{pid}] 抓取或更新失敗：{e}")
-
-                    await browser.close()
-            except Exception as e:
-                logger.error(f"[Playwright] 瀏覽器錯誤：{e}")
-                raise
+                    if existing_name != name or existing_kingdom != kingdom:
+                        updated.append({
+                            "id": pid,
+                            "old_name": existing_name or "未知",
+                            "new_name": name,
+                            "old_kingdom": existing_kingdom or "未知",
+                            "new_kingdom": kingdom
+                        })
+                        await firestore_set(doc_ref, {
+                            "name": name,
+                            "kingdom": kingdom,
+                            "updated_at": datetime.now(timezone.utc)
+                        }, merge=True)
+                    else:
+                        logger.info(f"[{pid}] 無變更，保留原資料")
+                except Exception as e:
+                    logger.error(f"[{pid}] 抓取或更新失敗：{e}")
 
         try:
             loop.run_until_complete(fetch_all())
@@ -1137,33 +1116,6 @@ def update_names_api():
         logger.error(f"[UpdateNames] 發生嚴重錯誤：{e}")
         return jsonify({"success": False, "reason": str(e)}), 500
 
-def retry_failed():
-    data = request.json
-    code = data.get("code")
-    guild_id = data.get("guild_id")
-    debug = data.get("debug", False)
-    player_ids = data.get("player_ids", [])
-
-    if not code or not guild_id:
-        return jsonify({"success": False, "reason": "缺少參數"}), 400
-
-    payload = {
-        "code": code,
-        "player_ids": player_ids,
-        "debug": debug,
-        "guild_id": guild_id,
-        "retry": True
-    }
-
-    def thread_runner(payload):
-        try:
-            asyncio.run(process_redeem(payload))
-        except Exception as e:
-            logger.exception(f"[Thread] /retry_failed 執行時發生例外：{e}")
-
-    threading.Thread(target=thread_runner, args=(payload,), daemon=True).start()
-    return jsonify({"success": True, "message": "Retry request submitted"}), 200
-
 @app.route("/line_quota", methods=["GET"])
 def line_quota():
     try:
@@ -1187,36 +1139,12 @@ def line_quota():
         return jsonify({"success": False, "reason": str(e)}), 500
 
 def send_to_discord(channel_id, mention, message):
+    # 僅支援 Discord Webhook；非 webhook 一律提醒並返回
     if "discord.com/api/webhooks/" in channel_id:
         content = f"{mention}\n⏰ **活動提醒 / Reminder** ⏰\n{message}"
         send_long_webhook(channel_id, content)
-    else:
-        try:
-            import discord
-            from discord.ext import commands
-
-            token = os.getenv("DISCORD_TOKEN")
-            if not token:
-                logger.warning("[Notify] 沒有設定 DISCORD_TOKEN，無法發送到頻道")
-                return
-
-            intents = discord.Intents.default()
-            intents.guilds = True
-            intents.messages = True
-
-            bot = commands.Bot(command_prefix="!", intents=intents)
-
-            @bot.event
-            async def on_ready():
-                channel = bot.get_channel(int(channel_id))
-                if channel:
-                    await channel.send(f"{mention}\n⏰ **活動提醒 / Reminder** ⏰\n{message}")
-                await bot.close()
-
-            bot.run(token)
-
-        except Exception as e:
-            logger.warning(f"[Notify] 發送 Discord 頻道失敗：{e}")
+        return
+    logger.warning("[Notify] 非 webhook URL 已停用，請改用 webhook")
 
 @app.route("/")
 def health():
@@ -1358,7 +1286,7 @@ def line_webhook():
                         "line_name": profile_name,
                         "game_name": game_name,
                         "game_id": game_id,
-                        "updated_at": datetime.utcnow()
+                        "updated_at": datetime.now(timezone.utc)
                     })
                     reply_message = f"✅ 已新增紀錄：\n📛 {profile_name}\n🎮 {game_name}\n🆔 {game_id}"
 
@@ -1407,7 +1335,7 @@ def line_webhook():
                         col_ref.document(doc.id).update({
                             "game_name": new_game_name,
                             "game_id": new_game_id,
-                            "updated_at": datetime.utcnow()
+                            "updated_at": datetime.now(timezone.utc)
                         })
                         reply_message = f"✏️ 已修改第 {idx+1} 筆紀錄：\n📛 {profile_name}\n🎮 {new_game_name}\n🆔 {new_game_id}"
                     except Exception as e:
@@ -1458,8 +1386,8 @@ def reply_to_line(reply_token, message):
         }]
     }
     try:
-        resp = requests.post(url, headers=headers, json=payload)  # ✅ 把回應存進 resp
-        print("[LINE] reply_to_line 回應：", resp.status_code, resp.text)
+        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+        logger.info("[LINE] reply_to_line 回應：%s %s", resp.status_code, resp.text)
     except Exception as e:
         logger.warning(f"[LINE] 回覆失敗：{e}")
 
@@ -1499,13 +1427,6 @@ def send_to_line_group(message):
             logger.info(f"[LINE] ✅ 推播成功：{resp.status_code} | Message: {message}")
     except Exception as e:
         logger.warning(f"[LINE] ❌ 推播發生例外：{e}")
-
-def thread_runner(payload):
-    try:
-        logger.info(f"[retry_failed] 後台開始處理 retry 任務 payload：{payload}")
-        asyncio.run(process_retry(payload))  # ✅ 這裡確保是 async coroutine
-    except Exception as e:
-        logger.exception("[thread_runner] 執行 retry 發生錯誤")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
