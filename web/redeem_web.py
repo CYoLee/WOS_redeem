@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
 #Remove preprocess_image_for_2captcha()
-from PIL import Image
+#from PIL import Image
 import subprocess
 import nest_asyncio
 import functools
@@ -599,19 +599,19 @@ def _clean_ocr_text(text):
         text = text.replace(wrong, correct)
     return ''.join(filter(str.isalnum, text))
 
-def _save_debug_captcha_image(img_np, label, player_id, attempt):
-    date_folder = f"debug/{datetime.now().strftime('%Y%m%d')}"
-    os.makedirs(date_folder, exist_ok=True)
-    filename = f"captcha_{player_id}_attempt{attempt}_{label}.png"
-    Image.fromarray(img_np).save(os.path.join(date_folder, filename))
+# def _save_debug_captcha_image(img_np, label, player_id, attempt):
+#     date_folder = f"debug/{datetime.now().strftime('%Y%m%d')}"
+#     os.makedirs(date_folder, exist_ok=True)
+#     filename = f"captcha_{player_id}_attempt{attempt}_{label}.png"
+#     Image.fromarray(img_np).save(os.path.join(date_folder, filename))
 
 
-def _save_blank_captcha_image(player_id, attempt):
-    date_folder = f"debug/{datetime.now().strftime('%Y%m%d')}"
-    os.makedirs(date_folder, exist_ok=True)
-    Image.new("RGB", (200, 50), "white").save(
-        os.path.join(date_folder, f"captcha_{player_id}_attempt{attempt}_blank_none.png")
-    )
+# def _save_blank_captcha_image(player_id, attempt):
+#     date_folder = f"debug/{datetime.now().strftime('%Y%m%d')}"
+#     os.makedirs(date_folder, exist_ok=True)
+#     Image.new("RGB", (200, 50), "white").save(
+#         os.path.join(date_folder, f"captcha_{player_id}_attempt{attempt}_blank_none.png")
+#     )
 
 CAPTCHA_API_KEY = os.getenv("CAPTCHA_API_KEY")
 logger.info(f"CAPTCHA_API_KEY 設定檢查: {bool(CAPTCHA_API_KEY)}")
