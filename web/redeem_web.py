@@ -37,7 +37,9 @@ from concurrent.futures import ThreadPoolExecutor
 REDEEM_THREAD_POOL = ThreadPoolExecutor(max_workers=4)
 DEFAULT_FETCH_LIMIT = 4
 # 說明：改為在事件迴圈內建立 asyncio.Semaphore，不再用全域 BoundedSemaphore
-
+from hashlib import sha256
+from hmac import compare_digest, new as hmac_new
+from flask import abort
 
 logging.basicConfig(
     level=logging.INFO,
@@ -102,13 +104,23 @@ DEBUG_MODE = True
 
 # === Firebase Init ===
 load_dotenv()
-cred_json = json.loads(base64.b64decode(
-    os.environ.get("FIREBASE_KEY_BASE64") or os.environ.get("FIREBASE_CREDENTIALS", "{}")
-).decode("utf-8"))
-if "private_key" in cred_json:
-    cred_json["private_key"] = cred_json["private_key"].replace("\\n", "\n")
+raw = os.getenv("FIREBASE_KEY_BASE64") or os.getenv("FIREBASE_CREDENTIALS")
+cred_json = None
+if raw:
+    try:
+        cred_json = json.loads(base64.b64decode(raw).decode("utf-8"))
+    except Exception:
+        cred_json = json.loads(raw)
+
 if not firebase_admin._apps:
-    firebase_admin.initialize_app(credentials.Certificate(cred_json))
+    if cred_json:
+        if "private_key" in cred_json:
+            cred_json["private_key"] = cred_json["private_key"].replace("\\n", "\n")
+        firebase_admin.initialize_app(credentials.Certificate(cred_json))
+    else:
+        # 沒提供 service account：改用 Application Default Credentials
+        firebase_admin.initialize_app()
+
 db = firestore.client()
 
 # === Firestore Async Wrapper ===
@@ -890,7 +902,7 @@ def add_id():
         name_changed = doc_data.get("name") != player_name
         kingdom_changed = doc_data.get("kingdom") != kingdom
 
-        if player_name == "未知名稱" or kingdom == "未知":
+        if player_name == "未知名稱" or not kingdom or kingdom == "未知":
             logger.warning(f"[{player_id}][Warn]名稱或王國為未知，未更新 Firestore")
             return jsonify({
                 "success": False,
@@ -1014,7 +1026,7 @@ async def process_retry(payload: dict):
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
     try:
-        data = request.json
+        data = request.json or {}
         guild_id = data.get("guild_id")
         logger.info(f"[API] /update_names_api 收到請求 guild_id={guild_id}")
         if not guild_id:
@@ -1022,68 +1034,73 @@ def update_names_api():
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
-        try:
-            player_docs = loop.run_until_complete(
-                firestore_stream(db.collection("ids").document(guild_id).collection("players"))
-            )
-        except Exception as e:
-            logger.error(f"[Firestore] 讀取 IDs 出錯：{e}")
-            return jsonify({"success": False, "reason": str(e)}), 500
-
-        player_ids = [doc.id for doc in player_docs]
         updated = []
-
-        async def fetch_all():
-            for pid in player_ids:
-                try:
-                    name, kingdom = await fetch_name_and_kingdom_common(pid)
-
-                    doc_ref = db.collection("ids").document(guild_id).collection("players").document(pid)
-                    existing_doc = await firestore_get(doc_ref)
-                    doc_data = existing_doc.to_dict() if existing_doc.exists else {}
-                    existing_name = doc_data.get("name")
-                    existing_kingdom = doc_data.get("kingdom")
-
-                    if name == "未知名稱" or not kingdom or kingdom == "未知":
-                        logger.warning(f"[{pid}][Warn]名稱或王國為未知，跳過更新")
-                        continue
-
-                    if existing_name != name or existing_kingdom != kingdom:
-                        updated.append({
-                            "id": pid,
-                            "old_name": existing_name or "未知",
-                            "new_name": name,
-                            "old_kingdom": existing_kingdom or "未知",
-                            "new_kingdom": kingdom
-                        })
-                        await firestore_set(doc_ref, {
-                            "name": name,
-                            "kingdom": kingdom,
-                            "updated_at": datetime.now(timezone.utc)
-                        }, merge=True)
-                    else:
-                        logger.info(f"[{pid}] 無變更，保留原資料")
-                except Exception as e:
-                    logger.error(f"[{pid}] 抓取或更新失敗：{e}")
-
         try:
-            loop.run_until_complete(fetch_all())
-        except Exception as e:
-            logger.error(f"[UpdateNames] fetch_all 執行失敗：{e}")
-            return jsonify({"success": False, "reason": str(e)}), 500
+            # 讀 IDs
+            try:
+                player_docs = loop.run_until_complete(
+                    firestore_stream(db.collection("ids").document(guild_id).collection("players"))
+                )
+            except Exception as e:
+                logger.error(f"[Firestore] 讀取 IDs 出錯：{e}")
+                return jsonify({"success": False, "reason": str(e)}), 500
 
+            player_ids = [doc.id for doc in player_docs]
+
+            async def fetch_all():
+                for pid in player_ids:
+                    try:
+                        name, kingdom = await fetch_name_and_kingdom_common(pid)
+
+                        doc_ref = db.collection("ids").document(guild_id).collection("players").document(pid)
+                        existing_doc = await firestore_get(doc_ref)
+                        doc_data = existing_doc.to_dict() if existing_doc.exists else {}
+                        existing_name = doc_data.get("name")
+                        existing_kingdom = doc_data.get("kingdom")
+
+                        if name == "未知名稱" or not kingdom or kingdom == "未知":
+                            logger.warning(f"[{pid}] 名稱或王國為未知，跳過更新")
+                            continue
+
+                        if existing_name != name or existing_kingdom != kingdom:
+                            updated.append({
+                                "id": pid,
+                                "old_name": existing_name or "未知",
+                                "new_name": name,
+                                "old_kingdom": existing_kingdom or "未知",
+                                "new_kingdom": kingdom
+                            })
+                            await firestore_set(doc_ref, {
+                                "name": name,
+                                "kingdom": kingdom,
+                                "updated_at": datetime.now(timezone.utc)
+                            }, merge=True)
+                        else:
+                            logger.info(f"[{pid}] 無變更，保留原資料")
+                    except Exception as e:
+                        logger.error(f"[{pid}] 抓取或更新失敗：{e}")
+
+            loop.run_until_complete(fetch_all())
+
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+        # 無更新：只回摘要，不送 webhook
         if not updated:
             logger.info(f"[update_names_api] 所有玩家皆無變更，guild_id={guild_id}")
             return jsonify({
                 "success": True,
                 "guild_id": guild_id,
-                "updated": [],
+                "updated": [],           # 兼容舊用法
+                "updated_count": 0,      # Bot 端讀這個就好
                 "message": "No updates needed"
-            })
+            }), 200
 
-        # ✅ Webhook
-        if updated and os.getenv("ADD_ID_WEBHOOK_URL"):
+        # 有更新：送監控 webhook 明細
+        if os.getenv("ADD_ID_WEBHOOK_URL"):
             try:
                 lines = []
                 for u in updated:
@@ -1097,20 +1114,19 @@ def update_names_api():
                         line += f"\n王國 {u['old_kingdom']} ➜ {u['new_kingdom']}"
                     lines.append(line)
 
-                content = (
-                    f"🔁 共更新 {len(updated)} 筆名稱 / Updated {len(updated)} records:\n\n"
-                    + "\n\n".join(lines)
-                )
+                content = f"🔁 共更新 {len(updated)} 筆名稱 / Updated {len(updated)} records:\n\n" + "\n\n".join(lines)
                 send_long_webhook(os.getenv("ADD_ID_WEBHOOK_URL"), content)
-                logger.info(f"[Webhook] 已發送更新通知")
+                logger.info("[Webhook] 已發送更新通知")
             except Exception as e:
                 logger.warning(f"[Webhook] 發送失敗：{e}")
 
+        # 回前端：摘要（含 count）
         return jsonify({
             "success": True,
             "guild_id": guild_id,
-            "updated": updated
-        })
+            "updated": updated,                 # 若要瘦身可移除
+            "updated_count": len(updated)
+        }), 200
 
     except Exception as e:
         logger.error(f"[UpdateNames] 發生嚴重錯誤：{e}")
@@ -1149,11 +1165,6 @@ def send_to_discord(channel_id, mention, message):
 @app.route("/")
 def health():
     return "Worker ready for redeeming!"
-
-from hashlib import sha256
-from hmac import compare_digest, new as hmac_new
-from flask import abort
-import time
 
 CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")  # ← 你要把你的 Secret 存進環境變數
 
@@ -1207,8 +1218,12 @@ async def check_and_send_notify():
 def line_webhook():
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
-    hash = hmac_new(CHANNEL_SECRET.encode(), body.encode(), sha256).digest()
-    encoded_hash = base64.b64encode(hash).decode()
+    # ✅ 必修：環境變數未設定時直接回 500 並記錄
+    if not CHANNEL_SECRET:
+        logger.error("[LINE] LINE_CHANNEL_SECRET 未設定")
+        abort(500)
+    digest = hmac_new(CHANNEL_SECRET.encode("utf-8"), body.encode("utf-8"), sha256).digest()
+    encoded_hash = base64.b64encode(digest).decode()
     if not compare_digest(encoded_hash, signature):
         abort(403)
 

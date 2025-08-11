@@ -1012,28 +1012,29 @@ async def update_names(interaction: discord.Interaction):
     guild_id = str(interaction.guild_id)
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{REDEEM_API_URL}/update_names_api", json={"guild_id": guild_id}) as resp:
+            async with session.post(f"{REDEEM_API_URL}/update_names_api",
+                                    json={"guild_id": guild_id}, timeout=60) as resp:
+                body_text = await resp.text()
                 if resp.status != 200:
-                    text = await resp.text()
-                    await interaction.followup.send(
-                        f"❌ API 回傳錯誤 / API error:{resp.status}\n{text}",
-                        ephemeral=True
-                    )
+                    await interaction.followup.send(f"❌ API 錯誤：{resp.status}\n{body_text}", ephemeral=True)
                     return
-                result = await resp.json()
+                try:
+                    result = json.loads(body_text)
+                except Exception:
+                    await interaction.followup.send(f"❌ 回應非 JSON：{body_text[:1800]}", ephemeral=True)
+                    return
 
-        updated = result.get("updated", [])
+        updated_list = result.get("updated") or []
+        updated_count = result.get("updated_count", len(updated_list))
 
-        if updated:
+        if updated_count > 0:
             await interaction.followup.send(
-                f"✨ 更新完成：共 {len(updated)} 筆 / Updated {len(updated)} names. 詳細名單已發送至監控頻道。",
-                ephemeral=True
+                f"✨ 更新完成：共 {updated_count} 筆 / Updated {updated_count} names。"
+                f"詳細變更已發送至監控頻道。", ephemeral=True
             )
         else:
-            await interaction.followup.send(
-                "✅ 沒有任何名稱需要更新 / No name updates required.",
-                ephemeral=True
-            )
+            await interaction.followup.send("✅ 無更新 / No name updates.", ephemeral=True)
+
     except Exception as e:
         await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
 
