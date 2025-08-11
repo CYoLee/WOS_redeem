@@ -1012,29 +1012,28 @@ async def update_names(interaction: discord.Interaction):
     guild_id = str(interaction.guild_id)
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{REDEEM_API_URL}/update_names_api", json={
-                "guild_id": guild_id
-            }) as resp:
+            async with session.post(f"{REDEEM_API_URL}/update_names_api", json={"guild_id": guild_id}) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    await interaction.followup.send(f"❌ API 回傳錯誤 / API error:{resp.status}\n{text}", ephemeral=True)
-                    return
-
-                result = await resp.json()
-                updated = result.get("updated", [])
-
-                if updated:
-                    lines = [f"{u['id']}（王國 {u['new_kingdom']}）\n{u['old_name']}（{u['old_kingdom']}） ➜ {u['new_name']}（{u['new_kingdom']}）" for u in updated]
-                    summary = "\n".join(lines)
-                    logger.info(f"[update_names] 共更新 {len(updated)} 筆名稱：\n{summary}")
                     await interaction.followup.send(
-                        f"✨ 共更新 {len(updated)} 筆名稱 / Updated {len(updated)} names：\n\n{summary}", ephemeral=True
+                        f"❌ API 回傳錯誤 / API error:{resp.status}\n{text}",
+                        ephemeral=True
                     )
+                    return
+                result = await resp.json()
 
-                else:
-                    logger.info(f"[update_names] 無任何名稱需要更新 / No names to update")
-                    await interaction.followup.send("✅ 沒有任何名稱需要更新 / No name updates required.", ephemeral=True)
+        updated = result.get("updated", [])
 
+        if updated:
+            await interaction.followup.send(
+                f"✨ 更新完成：共 {len(updated)} 筆 / Updated {len(updated)} names. 詳細名單已發送至監控頻道。",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                "✅ 沒有任何名稱需要更新 / No name updates required.",
+                ephemeral=True
+            )
     except Exception as e:
         await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
 
