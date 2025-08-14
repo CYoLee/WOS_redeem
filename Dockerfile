@@ -4,11 +4,11 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
-RUN grep -Evi '^(playwright($|[<>=~]))' requirements.txt > /tmp/req && \
-    pip install --no-cache-dir -r /tmp/req
+RUN pip install --no-cache-dir -r requirements.txt
 
 USER root
-RUN apt-get update \
+RUN playwright install --with-deps \
+ && apt-get update \
  && apt-get install -y --no-install-recommends fonts-noto-cjk \
  && rm -rf /var/lib/apt/lists/*
 USER pwuser
