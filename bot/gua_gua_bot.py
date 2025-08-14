@@ -1010,31 +1010,36 @@ async def context_translate(interaction: discord.Interaction, message: discord.M
 async def update_names(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True, ephemeral=True)
     guild_id = str(interaction.guild_id)
+
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{REDEEM_API_URL}/update_names_api",
-                                    json={"guild_id": guild_id}, timeout=60) as resp:
-                body_text = await resp.text()
-                if resp.status != 200:
-                    await interaction.followup.send(f"❌ API 錯誤：{resp.status}\n{body_text}", ephemeral=True)
-                    return
-                try:
-                    result = json.loads(body_text)
-                except Exception:
-                    await interaction.followup.send(f"❌ 回應非 JSON：{body_text[:1800]}", ephemeral=True)
-                    return
+            async with session.post(
+                f"{REDEEM_API_URL}/update_names_api",
+                json={"guild_id": guild_id},
+                timeout=10
+            ) as resp:
+                body = await resp.text()
 
-        updated_list = result.get("updated") or []
-        updated_count = result.get("updated_count", len(updated_list))
+                if resp.status == 200:
+                    await interaction.followup.send(
+                        "🛠️ 已啟動更新作業；完成後會把變更明細發到監控頻道。",
+                        ephemeral=True
+                    )
+                elif resp.status == 409:
+                    await interaction.followup.send(
+                        "⏳ 目前已有更新作業在進行中，請稍後再試。",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        f"❌ API 錯誤：{resp.status}\n{body[:1800]}",
+                        ephemeral=True
+                    )
 
-        if updated_count > 0:
-            await interaction.followup.send(
-                f"✨ 更新完成：共 {updated_count} 筆 / Updated {updated_count} names。"
-                f"詳細變更已發送至監控頻道。", ephemeral=True
-            )
-        else:
-            await interaction.followup.send("✅ 無更新 / No name updates.", ephemeral=True)
-
+    except asyncio.TimeoutError:
+        await interaction.followup.send("⏳ 已送出更新請求；後端稍後會回報結果。", ephemeral=True)
+    except ClientError as e:
+        await interaction.followup.send(f"❌ 連線失敗：{e}", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
 
