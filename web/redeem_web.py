@@ -169,8 +169,33 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
     all_success = []
     all_fail = []
     logger.info(f"[process_redeem] 傳入參數：code={code} player_ids={player_ids} guild_id={guild_id}")
-    await asyncio.gather(*(fetch_and_store_if_missing(guild_id, pid, fetch_semaphore) for pid in player_ids))
+
+    # 先做前置抓名（加上單筆 timeout 與錯誤隔離，避免某些卡死讓整批卡住）
+    logger.info(f"[Redeem] 進入前置查名階段，共 {len(player_ids)} 個 ID")
+    FETCH_TIMEOUT = 20  # 秒
+
+    async def safe_fetch(pid):
+        try:
+            await asyncio.wait_for(
+                fetch_and_store_if_missing(guild_id, pid, fetch_semaphore),
+                timeout=FETCH_TIMEOUT
+            )
+            return (pid, "ok", None)
+        except asyncio.TimeoutError:
+            logger.warning(f"[{pid}] fetch_and_store_if_missing timeout（{FETCH_TIMEOUT}s），略過此 ID 的前置抓取")
+            return (pid, "timeout", None)
+        except Exception as e:
+            logger.warning(f"[{pid}] fetch_and_store_if_missing 發生例外：{e}")
+            return (pid, "error", str(e))
+
+    safe_results = await asyncio.gather(*(safe_fetch(pid) for pid in player_ids))
+    timeouts = [pid for pid, status, _ in safe_results if status == "timeout"]
+    errors   = [pid for pid, status, _ in safe_results if status == "error"]
+    if timeouts or errors:
+        logger.info(f"[Redeem] 前置查名完成（timeouts={len(timeouts)} errors={len(errors)}）；將繼續後續流程")
+
     logger.info("準備讀取 success_redeems")
+
     success_docs = await firestore_stream(
         db.collection("success_redeems").document(f"{guild_id}_{code}").collection("players")
     )
