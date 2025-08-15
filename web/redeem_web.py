@@ -34,8 +34,8 @@ tz = pytz.timezone("Asia/Taipei")
 from googletrans import Translator
 translator = Translator()
 from concurrent.futures import ThreadPoolExecutor
-REDEEM_THREAD_POOL = ThreadPoolExecutor(max_workers=4)
-DEFAULT_FETCH_LIMIT = 4
+REDEEM_THREAD_POOL = ThreadPoolExecutor(max_workers=2)
+DEFAULT_FETCH_LIMIT = 2
 # 說明：改為在事件迴圈內建立 asyncio.Semaphore，不再用全域 BoundedSemaphore
 from hashlib import sha256
 from hmac import compare_digest, new as hmac_new
@@ -385,6 +385,7 @@ async def run_redeem_with_retry(player_id, code, guild_id, debug=False):
 
         # 如果是暫時性嘗試標記，重試
         if result["reason"].startswith("_try"):
+            await asyncio.sleep(1 + redeem_retry)
             continue
 
         # 成功條件：直接回傳
@@ -420,9 +421,13 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, args=["--disable-gpu","--no-sandbox","--disable-dev-shm-usage"])
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"]
+            )
             context = await browser.new_context(locale="zh-TW")
             page = await context.new_page()
+
             await page.goto("https://wos-giftcode.centurygame.com/", timeout=PAGE_LOAD_TIMEOUT)
             await page.fill('input[type="text"]', player_id)
             await page.click(".login_btn")
@@ -434,7 +439,9 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                 log_entry(0, error_modal=modal_text)
                 if any(k in modal_text for k in FAILURE_KEYWORDS):
                     logger.info(f"[{player_id}] 登入失敗：{modal_text}")
-                    return await _package_result(page, False, f"登入失敗：{modal_text}", player_id, debug_logs, debug=debug)
+                    return await _package_result(
+                        page, False, f"登入失敗：{modal_text}", player_id, debug_logs, debug=debug
+                    )
             except TimeoutError:
                 pass  # 無 modal 則繼續檢查登入成功
 
@@ -443,7 +450,11 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                 await page.wait_for_selector(".name", timeout=5000)
                 await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
             except TimeoutError:
-                return await _package_result(page, False, "登入失敗（未成功進入兌換頁） / Login failed (did not reach redeem page)", player_id, debug_logs, debug=debug)
+                return await _package_result(
+                    page, False,
+                    "登入失敗（未成功進入兌換頁） / Login failed (did not reach redeem page)",
+                    player_id, debug_logs, debug=debug
+                )
 
             await page.fill('input[placeholder="請輸入兌換碼"]', code)
 
@@ -478,15 +489,20 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                                         break
 
                                     if any(k in message for k in FAILURE_KEYWORDS):
-                                        return await _package_result(page, False, message, player_id, debug_logs, debug=debug)
+                                        return await _package_result(
+                                            page, False, message, player_id, debug_logs, debug=debug
+                                        )
 
                                     if "成功" in message:
-                                        return await _package_result(page, True, message, player_id, debug_logs, debug=debug)
+                                        return await _package_result(
+                                            page, True, message, player_id, debug_logs, debug=debug
+                                        )
 
-                                    return await _package_result(page, False, f"未知錯誤：{message}", player_id, debug_logs, debug=debug)
+                                    return await _package_result(
+                                        page, False, f"未知錯誤：{message}", player_id, debug_logs, debug=debug
+                                    )
 
                             await page.wait_for_timeout(300)
-
                         else:
                             log_entry(attempt, server_message="未出現 modal 回應（點擊被遮蔽或失敗）")
                             await _refresh_captcha(page, player_id=player_id)
@@ -505,7 +521,9 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
 
             log_entry(attempt, info="驗證碼三次辨識皆失敗，放棄兌換")
             logger.info(f"[{player_id}] 最終失敗：驗證碼三次辨識皆失敗 / Final failure: CAPTCHA failed 3 times")
-            return await _package_result(page, False, "驗證碼三次辨識皆失敗，放棄兌換", player_id, debug_logs, debug=debug)
+            return await _package_result(
+                page, False, "驗證碼三次辨識皆失敗，放棄兌換", player_id, debug_logs, debug=debug
+            )
 
     except Exception as e:
         logger.exception(f"[{player_id}] 發生例外錯誤：{e}")
@@ -514,12 +532,26 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
             try:
                 html = await page.content() if 'page' in locals() else "<no page>"
                 img = await page.screenshot() if 'page' in locals() else None
-            except:
+            except Exception:
                 pass
+
+        # 將瀏覽器啟動/連線類錯誤標記成可重試（reason 以 _try 開頭，觸發 run_redeem_with_retry 的退避重試）
+        err = str(e)
+        transient = any(s in err for s in [
+            "BrowserType.launch",
+            "Connection closed while reading from the driver",
+            "Target closed",
+            "Failed to launch",
+            "ECONNRESET",
+            "EPIPE",
+            "not connected",
+            "browserName=chromium"
+        ])
+
         return {
             "player_id": player_id,
             "success": False,
-            "reason": "例外錯誤",
+            "reason": (f"_try browser launch failed: {err}") if transient else f"例外錯誤：{err}",
             "debug_logs": debug_logs,
             "debug_html_base64": base64.b64encode(html.encode("utf-8")).decode() if html else None,
             "debug_img_base64": base64.b64encode(img).decode() if img else None
