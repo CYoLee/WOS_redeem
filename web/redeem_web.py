@@ -34,8 +34,8 @@ tz = pytz.timezone("Asia/Taipei")
 from googletrans import Translator
 translator = Translator()
 from concurrent.futures import ThreadPoolExecutor
-REDEEM_THREAD_POOL = ThreadPoolExecutor(max_workers=2)
-DEFAULT_FETCH_LIMIT = 2
+REDEEM_THREAD_POOL = ThreadPoolExecutor(max_workers=1)
+DEFAULT_FETCH_LIMIT = 1
 # 說明：改為在事件迴圈內建立 asyncio.Semaphore，不再用全域 BoundedSemaphore
 from hashlib import sha256
 from hmac import compare_digest, new as hmac_new
@@ -252,7 +252,7 @@ async def process_redeem(code, player_ids, guild_id, retry=False, fetch_semaphor
         return
 
     # ✅ 改為平行非同步兌換
-    sema = asyncio.Semaphore(DEFAULT_FETCH_LIMIT)
+    sema = fetch_semaphore
 
     async def limited_redeem(pid):
         async with sema:
@@ -454,7 +454,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
             page = await context.new_page()
 
             await page.goto("https://wos-giftcode.centurygame.com/", timeout=PAGE_LOAD_TIMEOUT)
-            await page.fill('input[type="text"]', player_id)
+            await page.fill('input[placeholder="角色ID"]', player_id)
             await page.click(".login_btn")
 
             # 嘗試等待錯誤 modal
@@ -841,40 +841,61 @@ async def _package_result(page, success, message, player_id, debug_logs, debug=F
 async def fetch_name_and_kingdom_common(pid):
     logger.info(f"[{pid}] Playwright 啟動準備")
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--disable-gpu","--no-sandbox","--disable-dev-shm-usage"])
-        context = await browser.new_context(locale="zh-TW")
-        page = await context.new_page()
-        name = "未知名稱"
-        kingdom = None
-        player_id = pid
-        for attempt in range(3):
-            try:
-                await page.goto("https://wos-giftcode.centurygame.com/")
-                await page.fill('input[type="text"]', pid)
-                await page.click(".login_btn")
-                await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
-                await page.wait_for_selector(".name", timeout=5000)
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"]
+        )
+        try:
+            context = await browser.new_context(locale="zh-TW")
+            page = await context.new_page()
 
-                name_el = await page.query_selector(".name")
-                name = await name_el.inner_text() if name_el else "未知名稱"
+            name, kingdom = "未知名稱", None
 
+            for attempt in range(3):
                 try:
-                    other_els = await page.query_selector_all(".other")
-                    for el in other_els:
-                        text = await el.inner_text()
-                        match = re.search(r"王國[:：]\s*(\d+)", text)
-                        if match:
-                            kingdom = match.group(1)
-                            break
-                except Exception as e:
-                    logger.warning(f"[{pid}][Warn] 擷取王國失敗：{e}")
-                break
-            except:
-                await page.wait_for_timeout(1000 + attempt * 500)
+                    await page.goto("https://wos-giftcode.centurygame.com/", timeout=PAGE_LOAD_TIMEOUT)
 
-        await browser.close()
-        logger.info(f"[{player_id}] Playwright 已關閉")
-        return name, kingdom
+                    # 角色ID欄位：中文優先、英文備援
+                    try:
+                        await page.wait_for_selector('input[placeholder="角色ID"]:visible', timeout=5000)
+                        await page.fill('input[placeholder="角色ID"]', pid)
+                    except Exception:
+                        await page.wait_for_selector('input[placeholder="Character ID"]:visible', timeout=5000)
+                        await page.fill('input[placeholder="Character ID"]', pid)
+
+                    await page.click(".login_btn")
+
+                    # 確認真的進到兌換頁
+                    await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
+                    await page.wait_for_selector(".name", timeout=5000)
+
+                    # 角色名稱
+                    name_el = await page.query_selector(".name")
+                    raw_name = await name_el.inner_text() if name_el else "未知名稱"
+                    name = re.sub(r"\s+", " ", raw_name).strip()
+
+                    # 王國
+                    kingdom = None
+                    try:
+                        for el in await page.query_selector_all(".other"):
+                            text = await el.inner_text()
+                            m = re.search(r"王國[:：]\s*(\d+)", text)
+                            if m:
+                                kingdom = m.group(1)
+                                break
+                    except Exception as e:
+                        logger.warning(f"[{pid}][Warn] 擷取王國失敗：{e}")
+
+                    break  # 成功就跳出重試迴圈
+
+                except Exception as e:
+                    logger.warning(f"[{pid}] fetch_name 第 {attempt+1} 次失敗：{e}")
+                    await page.wait_for_timeout(1000 * (attempt + 1))
+
+            return name, kingdom
+        finally:
+            await browser.close()
+            logger.info(f"[{pid}] Playwright 已關閉")
 
 async def fetch_and_store_if_missing(guild_id, player_id, fetch_semaphore):
     try:
