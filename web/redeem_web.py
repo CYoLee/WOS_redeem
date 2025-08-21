@@ -1246,23 +1246,29 @@ def health():
 
 CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")  # ← 你要把你的 Secret 存進環境變數
 
-async def get_translate_setting(group_id):
+async def get_translate_setting(group_id: str) -> bool:
     try:
-        ref = db.collection("line_groups").document(group_id).collection("config").document("settings")
-        doc = await firestore_get(ref)
+        doc_ref = (
+            db.collection("line_groups")
+              .document(group_id)
+              .collection("settings")
+              .document("translate")
+        )
+        doc = await firestore_get(doc_ref)
         if doc.exists:
-            return doc.to_dict().get("translate_enabled", True)  # 預設為開
-        return True
+            return bool(doc.to_dict().get("translate_enabled", False))  # 預設 False
+        return False  # 文件不存在 -> 關閉
     except Exception as e:
-        logger.warning(f"[LINE] 無法讀取翻譯設定：{e}")
-        return True
+        logger.warning(f"[LINE] 讀取翻譯開關失敗，fail-close：{e}")
+        return False  # 例外也關閉
 
 async def set_translate_setting(group_id, enabled: bool):
     try:
-        ref = db.collection("line_groups").document(group_id).collection("config").document("settings")
-        await firestore_set(ref, {
-            "translate_enabled": enabled
-        }, merge=True)
+        ref = (db.collection("line_groups")
+                 .document(group_id)
+                 .collection("settings")
+                 .document("translate"))   # ← 改這裡，與 get 相同
+        await firestore_set(ref, {"translate_enabled": enabled}, merge=True)
         return True
     except Exception as e:
         logger.warning(f"[LINE] 無法寫入翻譯設定：{e}")
